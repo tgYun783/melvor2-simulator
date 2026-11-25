@@ -1,0 +1,18 @@
+# generated at run time (contains the user's save snapshot / extracted game data)
+app.html
+cache/
+results.json
+report.html
+
+# build output
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+
+# editor / tooling
+.claude/
+.vscode/
+.idea/
+*.log

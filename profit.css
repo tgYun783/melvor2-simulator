@@ -1,0 +1,70 @@
+/* ---- tabs ---- */
+.tabs{display:flex;gap:4px;margin-left:6px}
+.tabs button{background:transparent;border:1px solid transparent;color:var(--muted);padding:6px 12px;border-radius:6px;font-weight:600}
+.tabs button.on{background:var(--panel3);border-color:var(--border2);color:var(--text)}
+.tabs button:hover{color:var(--text)}
+#bankBar{margin-left:auto;display:flex;align-items:center;gap:14px;color:var(--muted);font-size:12px}
+#bankBar b{color:var(--text);font-size:14px}
+
+/* ---- profit sidebar ---- */
+.pskills{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 10px}
+.pskills label{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px;color:var(--muted);min-width:0}
+.pskills label span.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pskills input{width:56px}
+.pskills label.ch{color:var(--warn)}
+details.skb{border:1px solid var(--border);border-radius:6px;margin:6px 0;background:var(--panel)}
+details.skb>summary{cursor:pointer;padding:6px 10px;font-weight:600;list-style:none;display:flex;gap:8px;align-items:center;font-size:12px}
+details.skb>summary::before{content:"▸";color:var(--muted);font-size:10px}
+details.skb[open]>summary::before{content:"▾"}
+details.skb>summary .cnt{margin-left:auto;font-weight:400;color:var(--muted)}
+details.skb>.b{padding:2px 10px 10px}
+.tbslot{display:flex;align-items:center;gap:6px;margin:3px 0;font-size:12px}
+.tbslot .sn{width:84px;flex:none;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbslot select{flex:1;min-width:0;font-size:12px;padding:2px 4px}
+.tbslot.ch select{border-color:var(--warn)}
+.tbslot.astro .sn{width:auto;flex:1;white-space:normal;color:var(--text)}
+.tbslot.astro select{flex:none;width:64px}
+.shopup{display:flex;align-items:flex-start;gap:6px;margin:4px 0;font-size:12px;line-height:1.35}
+.shopup input{margin-top:2px}
+.shopup .gp{color:var(--faint);margin-left:4px}
+.shopup .bt{color:var(--muted);display:block;font-size:11px}
+.sub-h{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin:8px 0 3px}
+
+/* ---- profit main ---- */
+#ptableWrap{flex:1;overflow:auto;padding:0 16px 20px}
+#pt td.l,#pt th.l{text-align:left}
+#pt td.neg{color:var(--crit)}
+#pt td.pos{color:var(--good)}
+#pt tr.lock td{opacity:.5}
+#pt .it{color:var(--muted);font-size:11px}
+#pchartWrap{flex:1;overflow:auto;padding:14px 18px}
+#pchart text{font-size:11px;fill:var(--muted)}
+#pchart .lbl{fill:var(--text)}
+#pchart .val{fill:var(--text);font-variant-numeric:tabular-nums}
+#pchart rect.bar{fill:var(--accent)}
+#pchart rect.bar.neg{fill:var(--crit)}
+#pchart rect.hit{fill:transparent;cursor:pointer}
+#pchart rect.hit:hover{fill:rgba(255,255,255,.06)}
+.pstats{display:flex;flex-wrap:wrap;gap:10px;padding:10px 18px 0}
+.pstats .card{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;min-width:130px}
+.pstats .card .k{font-size:11px;color:var(--muted)}
+.pstats .card .v{font-size:16px;font-weight:650;margin-top:2px}
+
+/* ---- profit detail ---- */
+.pd h2{font-size:15px;margin:0 0 4px}
+.pd .meta{color:var(--muted);font-size:12px;margin-bottom:10px}
+.pd h3{font-size:12px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px}
+.pd table{width:100%;border-collapse:collapse;font-size:12px}
+.pd td{padding:3px 4px;border-bottom:1px solid var(--border);vertical-align:top;text-align:left;white-space:normal}
+.pd td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pd select{font-size:12px;padding:2px 4px;max-width:100%}
+.pd .cmp{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.pd .cmp span{font-size:11px;background:var(--panel3);border-radius:10px;padding:1px 7px;color:var(--muted);cursor:pointer;border:1px solid transparent}
+.pd .cmp span.on{border-color:var(--accent);color:var(--text)}
+.pd .cmp span:hover{color:var(--text)}
+.pd .kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.pd .kv div{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:6px 8px}
+.pd .kv .k{font-size:11px;color:var(--muted)} .pd .kv .v{font-size:14px;font-weight:600}
+.pd .src{color:var(--faint);font-size:11px}
+.pd .chain{font-size:12px;color:var(--muted);margin:2px 0 2px 10px}
+.pd .warnbox{background:rgba(250,178,25,.1);border:1px solid rgba(250,178,25,.35);border-radius:6px;padding:6px 8px;font-size:12px;margin:8px 0}

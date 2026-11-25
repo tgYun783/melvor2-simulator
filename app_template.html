@@ -1,0 +1,1018 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Melvor Idle 2 시뮬레이터</title>
+<style>
+:root{
+  --bg:#15171c; --panel:#1e2128; --panel2:#262a33; --panel3:#2f343f; --border:#333845; --border2:#434a58;
+  --text:#e8e8e6; --muted:#9a9aa6; --faint:#6b6f7a;
+  --accent:#3987e5; --accent2:#2a6fc4;
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#e66767;
+  --grid:#2c2c2a; --axis:#383835;
+  --radius:8px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic",sans-serif;font-size:13px;background:var(--bg);color:var(--text);display:flex;flex-direction:column;height:100vh;overflow:hidden}
+button,input,select{font:inherit;color:inherit}
+button{background:var(--panel3);border:1px solid var(--border2);border-radius:6px;padding:5px 10px;cursor:pointer}
+button:hover{background:#3a404d}
+button.primary{background:var(--accent);border-color:var(--accent2);color:#fff;font-weight:600;padding:7px 16px}
+button.primary:hover{background:#4a93ea}
+button.primary:disabled{opacity:.6;cursor:progress}
+button.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+button.ghost:hover{color:var(--text);background:var(--panel3)}
+button.small{padding:2px 8px;font-size:12px}
+input[type=number],input[type=text],input[type=search],select{background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:4px 7px;min-width:0}
+input[type=number]{width:64px;text-align:right}
+kbd{font:11px ui-monospace,monospace;background:rgba(255,255,255,.12);border-radius:4px;padding:1px 5px;margin-left:6px}
+.hidden{display:none !important}
+.muted{color:var(--muted)} .faint{color:var(--faint)}
+.good{color:var(--good)} .warn{color:var(--warn)} .crit{color:var(--crit)}
+.badge{display:inline-block;font-size:11px;padding:1px 6px;border-radius:10px;background:var(--panel3);color:var(--muted);margin-right:6px;vertical-align:middle}
+.badge.dungeon{background:#3a2f55;color:#c9b8f5} .badge.enemy{background:#2c3f33;color:#9fd8ad}
+
+/* ---- header ---- */
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;padding:10px 18px;background:var(--panel);border-bottom:1px solid var(--border);flex:none}
+header h1{font-size:16px;margin:0;font-weight:650}
+header .sub{color:var(--muted);font-size:12px;margin-left:10px}
+.runbar{margin-left:auto;display:flex;align-items:center;gap:12px}
+.runbar label{color:var(--muted);display:flex;align-items:center;gap:6px}
+#progress{width:200px;height:26px;position:relative;background:var(--bg);border:1px solid var(--border2);border-radius:6px;overflow:hidden}
+#progress .bar{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent2);transition:width .1s}
+#progress .txt{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text)}
+
+/* ---- layout ---- */
+.layout{display:flex;flex:1;min-height:0}
+aside.side{width:360px;flex:none;overflow-y:auto;background:var(--panel);border-right:1px solid var(--border);padding:10px 12px 40px}
+main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+aside.detail{width:380px;flex:none;overflow-y:auto;background:var(--panel);border-left:1px solid var(--border);padding:14px 16px 40px}
+
+/* ---- sidebar sections ---- */
+details.sec{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;background:var(--panel2)}
+details.sec>summary{cursor:pointer;padding:8px 12px;font-weight:600;list-style:none;display:flex;align-items:center;gap:8px}
+details.sec>summary::before{content:"▸";color:var(--muted);font-size:11px;transition:transform .15s}
+details.sec[open]>summary::before{transform:rotate(90deg)}
+details.sec>summary .hint{margin-left:auto;font-weight:400;color:var(--muted);font-size:12px}
+details.sec>.body{padding:4px 12px 12px}
+.row{display:flex;align-items:center;gap:8px;margin:5px 0}
+.row label{color:var(--muted);min-width:70px}
+.row .grow{flex:1}
+.preset-bar{display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.preset-bar select{flex:1;min-width:120px}
+.preset-bar button.stale{border-color:var(--warn);color:var(--warn)}
+.preset-bar button.stale::after{content:" ●";font-size:9px;vertical-align:middle}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;max-width:640px;background:var(--panel);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-size:12px;box-shadow:0 10px 30px rgba(0,0,0,.6)}
+
+.levels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px}
+.levels label{display:flex;align-items:center;justify-content:space-between;color:var(--muted)}
+.levels input{width:66px}
+.levels .was{font-size:11px;color:var(--faint);margin-left:4px}
+
+.slots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.slot{background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:6px 8px;cursor:pointer;min-height:48px;display:flex;flex-direction:column;gap:2px;position:relative}
+.slot:hover{border-color:var(--accent)}
+.slot.empty .name{color:var(--faint);font-style:italic}
+.slot.locked{opacity:.45;cursor:not-allowed}
+.slot.changed{border-color:var(--warn)}
+.slot .lbl{font-size:11px;color:var(--muted)}
+.slot .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slot .st{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slot .qty{position:absolute;right:6px;top:5px;font-size:11px;color:var(--faint)}
+.slot .bad{color:var(--crit)}
+
+.stances{display:flex;flex-wrap:wrap;gap:6px}
+.stances label{border:1px solid var(--border2);border-radius:6px;padding:5px 10px;cursor:pointer;background:var(--bg)}
+.stances label.on{border-color:var(--accent);background:rgba(57,135,229,.15)}
+.stances label input{display:none}
+.stances .xp{display:block;font-size:11px;color:var(--muted)}
+.tiers{display:flex;gap:6px}
+.tiers label{flex:1;border:1px solid var(--border2);border-radius:6px;padding:5px 8px;cursor:pointer;background:var(--bg);text-align:center}
+.tiers label.on{border-color:var(--accent);background:rgba(57,135,229,.15)}
+.tiers label input{display:none}
+.tiers small{display:block;color:var(--muted)}
+.note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:6px}
+
+/* ---- main ---- */
+.banner{padding:8px 16px;background:#3a3417;color:#f3d77a;border-bottom:1px solid #5a5020;display:flex;align-items:center;gap:12px;flex:none}
+.stats{display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px 4px;flex:none}
+.stat{background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;min-width:104px}
+.stat .k{font-size:11px;color:var(--muted)} .stat .v{font-size:18px;font-weight:650;margin-top:2px}
+.stat .d{font-size:11px;color:var(--faint)} .stat .d.up{color:var(--good)} .stat .d.down{color:var(--crit)}
+.warnings{padding:0 16px;flex:none}
+.warnings div{color:var(--warn);font-size:12px;margin:3px 0}
+.unmodeled{padding:0 16px;color:var(--faint);font-size:11px;flex:none}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 16px;flex:none;border-bottom:1px solid var(--border)}
+.toolbar input[type=search]{width:200px}
+.seg{display:inline-flex;border:1px solid var(--border2);border-radius:6px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:var(--bg);padding:4px 10px}
+.seg button.on{background:var(--accent);color:#fff}
+.toolbar .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.count{color:var(--muted);font-size:12px}
+
+#tableWrap{flex:1;overflow:auto;padding:0 16px 20px}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel2);cursor:pointer;user-select:none;color:var(--muted);font-weight:600;z-index:1}
+th.on{color:var(--text)} th .arr{font-size:10px;margin-left:3px}
+th.l,td.l{text-align:left}
+tbody tr{cursor:pointer} tbody tr:hover{background:var(--panel2)} tbody tr.sel{background:#243550}
+tr.dead td{color:var(--crit)} tr.risky td{color:var(--warn)}
+td .d{display:block;font-size:10.5px;color:var(--faint);line-height:1} td .d.up{color:var(--good)} td .d.down{color:var(--crit)}
+td.fav{cursor:pointer;color:var(--faint);width:24px;text-align:center} td.fav.on{color:var(--warn)}
+td .nm{font-weight:600} td .sub{color:var(--muted);font-size:11px;margin-left:6px}
+.safe-ic{font-size:11px}
+.empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:15px;text-align:center;line-height:1.8;padding:20px}
+
+/* ---- chart ---- */
+#chartWrap{flex:1;overflow:auto;padding:8px 16px 20px}
+#chart{display:block;width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:var(--radius)}
+.legend{display:flex;gap:18px;color:var(--muted);font-size:12px;padding:8px 4px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.tooltip{position:fixed;z-index:50;pointer-events:none;background:#0d0e12;border:1px solid var(--border2);border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.5;max-width:280px;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+.tooltip b{display:block;margin-bottom:2px}
+
+/* ---- detail ---- */
+.detail h2{font-size:16px;margin:0 0 4px}
+.detail h3{font-size:12px;color:var(--muted);margin:16px 0 6px;text-transform:uppercase;letter-spacing:.04em}
+.detail .close{float:right}
+.kv{display:grid;grid-template-columns:1fr auto;gap:3px 12px}
+.kv div:nth-child(even){text-align:right;font-variant-numeric:tabular-nums}
+.enemy-seq{display:flex;flex-direction:column;gap:4px}
+.enemy-seq div{background:var(--panel2);border-radius:6px;padding:5px 8px;display:flex;justify-content:space-between}
+.detail .actions{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap}
+.tag{display:inline-block;background:var(--panel3);border-radius:4px;padding:1px 6px;font-size:11px;margin:2px 4px 2px 0;color:var(--muted)}
+
+/* ---- popover picker ---- */
+.popover{position:fixed;z-index:40;width:420px;max-height:70vh;background:var(--panel);border:1px solid var(--border2);border-radius:var(--radius);box-shadow:0 10px 30px rgba(0,0,0,.6);display:flex;flex-direction:column}
+.popover .head{padding:10px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center}
+.popover .head input{flex:1}
+.popover .list{overflow-y:auto;padding:4px 0}
+.popover .grp{padding:6px 12px 2px;font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+.popover .it{padding:6px 12px;display:flex;align-items:center;gap:8px;cursor:pointer}
+.popover .it:hover,.popover .it.cur{background:var(--panel2)}
+.popover .it .n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.popover .it .n small{color:var(--faint);margin-left:6px}
+.popover .it .s{font-size:11px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.popover .it .s b{font-weight:500}
+.popover .it.locked .n{color:var(--faint)}
+.popover .it .dl{font-size:11px;min-width:52px;text-align:right}
+.scrim{position:fixed;inset:0;z-index:39}
+
+@media (max-width:1100px){aside.side{width:300px} aside.detail{position:fixed;right:0;top:0;bottom:0;z-index:30;box-shadow:-10px 0 30px rgba(0,0,0,.5)}}
+</style>
+<style id="profitCss">/*__PROFIT_CSS__*/</style>
+</head>
+<body>
+<header class="top">
+  <div><h1>Melvor Idle 2 시뮬레이터 <span class="sub" id="saveInfo"></span></h1></div>
+  <div class="tabs"><button data-tab="combat" class="on">⚔ 전투 시뮬</button><button data-tab="profit">💰 수익성</button></div>
+  <div id="bankBar" class="hidden"></div>
+  <div class="runbar">
+    <label>대상당 <select id="hours"><option value="0.5">30분</option><option value="1">1시간</option><option value="2" selected>2시간</option><option value="5">5시간</option><option value="10">10시간</option></select></label>
+    <label>시드 <input type="number" id="seed" value="1" style="width:60px"></label>
+    <div id="progress"><div class="bar"></div><span class="txt">대기 중</span></div>
+    <button class="primary" id="run">▶ 시뮬레이션 실행<kbd>Ctrl+Enter</kbd></button>
+  </div>
+</header>
+
+<div class="layout" id="combatTab">
+<aside class="side">
+  <div class="preset-bar">
+    <select id="presetSel"><option value="">프리셋 불러오기…</option></select>
+    <button class="small" id="presetSave" title="현재 설정을 이름 붙여 저장">저장</button>
+    <button class="small" id="presetDel" title="선택한 프리셋 삭제">삭제</button>
+    <button class="small" id="resetSave" title="세이브 파일을 다시 읽어 장비·레벨·음식을 현재 상태로 갱신">↺ 세이브 갱신</button>
+  </div>
+
+  <details class="sec" open><summary>레벨 <span class="hint" id="lvHint"></span></summary>
+    <div class="body"><div class="levels" id="levels"></div>
+      <div class="note">세이브의 경험치로 계산된 값이 기본입니다. 값을 바꿔 "레벨이 오르면 어디가 좋아질지"를 볼 수 있습니다.</div></div>
+  </details>
+
+  <details class="sec" open><summary>장비 <span class="hint" id="eqHint"></span></summary>
+    <div class="body">
+      <div class="row"><label style="min-width:auto"><input type="checkbox" id="ownedOnly" checked> 보유 아이템 우선 표시</label></div>
+      <div class="slots" id="slots"></div>
+      <div class="note">칸을 클릭해 아이템을 고릅니다. 수치는 <b>현재 스탠스 기준 명중 / 힘 / 평균 방어 / Protection</b>이고, 노란 테두리는 세이브와 달라진 칸입니다.</div>
+    </div>
+  </details>
+
+  <details class="sec" open><summary>전투 방식 <span class="hint" id="stHint"></span></summary>
+    <div class="body">
+      <div class="stances" id="stances"></div>
+      <div class="row" id="spellRow"><label>주문</label><select id="spell" class="grow"></select></div>
+      <div class="row"><label>추가 Light</label><input type="number" id="extraLight" min="0" max="30" value="0"><span class="muted">장비 외 광원(암흑 지역용)</span></div>
+      <div class="row"><label>점성술</label><label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="astroOn"> 노드 보너스 반영</label><span class="muted" id="astroHint" title="해금 노드는 💰 수익성 탭의 스킬 보너스 패널에서 바꿀 수 있습니다"></span></div>
+    </div>
+  </details>
+
+  <details class="sec" open><summary>음식 · 자동식사 <span class="hint" id="fdHint"></span></summary>
+    <div class="body">
+      <div class="row"><label>음식</label><select id="food" class="grow"></select></div>
+      <div class="tiers" id="tiers"></div>
+      <div class="row"><label>임계 HP</label><input type="number" id="aeT" min="1" max="99" step="1"><span class="muted">% 이하가 되면 먹음</span></div>
+      <div class="row"><label>회복 효율</label><input type="number" id="aeE" min="50" max="300" step="1"><span class="muted">%</span></div>
+      <div class="note" id="foodNote"></div>
+    </div>
+  </details>
+
+  <details class="sec"><summary>모델 설명</summary>
+    <div class="body note">
+      게임 DLL을 디컴파일해 대조한 공식을 그대로 사용합니다.<br>
+      • 명중/회피 = floor((레벨+9)×(보너스+64)), 명중률 = 1−회피/(2×명중) 또는 명중/(2×회피)<br>
+      • 최대타(근접/원거리) = floor(22+레벨+(레벨+17)×힘/64), 마법 = floor(주문최대타×(1+피해보너스)×(1+(레벨+1)/200))<br>
+      • 저항 = Protection/(상대 Power+Protection) 최대 70%, 삼각형 ±15%; 피해 순서 저항 → Ward → Armour → 최소 1<br>
+      • 자동식사: HP ≤ round(최대HP×임계)이면 floor((최대HP−HP)/회복량) 개를 먹음 (최소 1). HP 자연회복 없음<br>
+      • XP = 준 체력 피해×스탠스 배율 + 처치 시 배율×(4×Armour+50×Ward). 스폰 대기 3초<br>
+      • 미반영: 기도, 물약, 장비 고유 보너스, TurnCounting 계열 적 패시브. 사망 시에도 시뮬레이션은 계속되며 사망/시간으로 표시
+    </div>
+  </details>
+</aside>
+
+<main>
+  <div class="banner hidden" id="stale">설정이 바뀌었습니다. 아래 결과는 이전 설정 기준입니다. <button class="small" id="rerun">다시 실행</button></div>
+  <div id="toast" class="hidden"></div>
+  <div class="stats" id="stats"></div>
+  <div class="warnings" id="warnings"></div>
+  <div class="unmodeled" id="unmodeled"></div>
+  <div class="toolbar">
+    <input type="search" id="q" placeholder="대상 / 지역 검색">
+    <div class="seg" id="kindSeg"><button data-v="all" class="on">전체</button><button data-v="enemy">적</button><button data-v="dungeon">던전</button></div>
+    <div class="seg" id="safeSeg"><button data-v="all" class="on">모두</button><button data-v="safe">안전만</button><button data-v="nodeath">사망 제외</button></div>
+    <select id="diffSel"><option value="">난이도 전체</option></select>
+    <label><input type="checkbox" id="favOnly"> ★만</label>
+    <div class="right">
+      <span class="count" id="count"></span>
+      <button class="small" id="baseline" title="현재 결과를 기준으로 고정하고, 이후 실행 결과와의 차이를 표시">기준으로 고정</button>
+      <div class="seg" id="viewSeg"><button data-v="table" class="on">표</button><button data-v="chart">차트</button></div>
+    </div>
+  </div>
+  <div id="tableWrap"><table id="t"><thead></thead><tbody></tbody></table></div>
+  <div id="chartWrap" class="hidden"><svg id="chart" height="440"></svg><div class="legend" id="legend"></div></div>
+  <div class="empty" id="empty"><div>왼쪽에서 장비·스탠스·음식을 설정하고<br><b>▶ 시뮬레이션 실행</b>을 누르세요.<br><span class="muted" style="font-size:12px">모든 적과 던전을 대상당 선택한 시간만큼 반복 사냥했을 때의 XP/시간과 음식 소모를 비교합니다.</span></div></div>
+</main>
+
+<aside class="detail hidden" id="detail"></aside>
+</div>
+
+<!-- ===================== 수익성 계산기 탭 ===================== -->
+<div class="layout hidden" id="profitTab">
+<aside class="side">
+  <div class="preset-bar">
+    <select id="presetSel2"><option value="">프리셋 불러오기…</option></select>
+    <button class="small" id="presetSave2" title="현재 보너스/레벨/수급 설정을 이름 붙여 저장">저장</button>
+    <button class="small" id="presetDel2">삭제</button>
+    <button class="small" id="presetReset2" title="세이브 파일을 다시 읽어 레벨·툴벨트·펫·상점 구매·길드 추정치를 현재 상태로 갱신 (재료 수급 경로는 유지)">↺ 세이브 갱신</button>
+  </div>
+
+  <details class="sec" open><summary>스킬 레벨 <span class="hint" id="plvHint"></span></summary>
+    <div class="body"><div class="pskills" id="plevels"></div>
+      <div class="note">레벨은 해금 여부와 요리 성공률·도둑질 은신에 영향을 줍니다. 전투 스킬 요구치는 전투 탭의 레벨을 따릅니다.</div></div>
+  </details>
+
+  <details class="sec" open><summary>보너스 <span class="hint">툴벨트 · 펫 · 길드 · 상점</span></summary>
+    <div class="body">
+      <div class="note" style="margin:0 0 6px">세이브에서 읽은 툴벨트 장착품·상점 구매·펫이 기본값입니다(✓ 보유). 바꿔 보면 결과가 즉시 다시 계산됩니다.</div>
+      <div id="pbonus"></div>
+    </div>
+  </details>
+
+  <details class="sec" open><summary>재료 수급 경로 <span class="hint">SimcoTools 방식</span></summary>
+    <div class="body" id="psrcList"></div>
+  </details>
+
+  <details class="sec"><summary>모델 설명</summary>
+    <div class="body note">
+      디컴파일한 각 스킬 ActionStats/ActionComponent 의 공식을 기대값으로 계산합니다.<br>
+      • <b>창고 가치</b> = 아이템 판매가(SellsFor) 합 + GP. 재료를 창고에서 쓰면 그 판매가만큼 가치가 줄어든 것으로 계산<br>
+      • 수급 경로: <b>창고</b>(판매가 차감) / <b>상점 구매</b>(GP 가격 차감) / <b>직접 생산</b>(비용 0, 생산 시간을 더해 시간당 가치로 환산, 부산물 포함)<br>
+      • 보너스 합산: 같은 스탯의 값을 모두 더함(상점은 구매 수량 배). 적용 범위(스킬/카테고리/레시피/아이템)는 게임 데이터의 LocalContext 그대로<br>
+      • 벌목: 나무 체력 ceil((기본+고정)×(1+%)), 타격당 1 피해(약점 3+10%체력, 2배 피해, 즉시 벌목), 벌목 완료 시 산출×(1+2배확률)<br>
+      • 채광: 타격당 성공 확률 = 기본×(1+%), 누적 진행도 ≥ 1이면 확정. 분쇄 ×3 수량·×2 XP<br>
+      • 낚시: 간격 균등분포 평균, 물고기 확률 아니면 쓰레기(재굴림 적용), 가중치 산출, 특수 아이템 누적 확률<br>
+      • 요리: 성공률 = (69+숙련)/(69+난이도), 숙련 = 레벨+보너스. 제작(제련·공예·화살·룬·야수): 단계 수와 건너뛰기 확률로 기대 행동 수<br>
+      • 약초학: 준비+가열+교반 후 병입 10회(병입마다 재료 소모·물약 3개). 도둑질: 성공률 = (100+은신)/(100+감지), 실패 시 기절·피해<br>
+      • 농사·제분소·목축은 다른 활동과 동시에 진행되는 수동 활동이라 구획 1개 / 동물 1마리 기준입니다. 동물 구매비는 수명으로 나눠 반영하고, 구획·땅·축사 구매비와 자동화 비용은 미반영입니다.
+      • 미반영: 소모성 툴벨트(물약) 소모 비용, 낚시 미끼, 점성술 노드, 사냥/민첩, 상점 판매가 수정자, 희귀 드롭의 실제 분산
+    </div>
+  </details>
+</aside>
+
+<main>
+  <div class="pstats" id="pstats"></div>
+  <div class="toolbar">
+    <input type="search" id="pq" placeholder="활동 / 아이템 검색">
+    <select id="pskill"><option value="">모든 스킬</option></select>
+    <label title="현재 레벨로 할 수 있는 활동만"><input type="checkbox" id="ponlyOk" checked> 가능한 것만</label>
+    <div class="right">
+      <span class="count" id="pcount"></span>
+      <div class="seg" id="pviewSeg"><button data-v="table" class="on">표</button><button data-v="chart">차트</button></div>
+    </div>
+  </div>
+  <div id="ptableWrap"><table id="pt" class="tbl"><thead></thead><tbody></tbody></table></div>
+  <div id="pchartWrap" class="hidden"><svg id="pchart" height="400"></svg></div>
+</main>
+
+<aside class="detail hidden" id="pdetail"></aside>
+</div>
+
+<div id="tooltip" class="tooltip hidden"></div>
+
+<script id="bundle" type="application/json">/*__BUNDLE__*/null</script>
+
+<script id="engine">
+// ====================================================================
+// Simulation engine. Shared by the page (stat preview) and the worker.
+// A direct port of Melvor2Sim/melvor2_sim.py (verified vs the game DLL).
+// ====================================================================
+var Engine = (function () {
+  var COMBAT_SKILLS = ["Attack", "Strength", "Defence", "Ranged", "Magic"];
+  function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  function rating(l, b) { return Math.floor((l + 9) * (b + 64)); }
+  function hitChance(acc, eva) { if (acc <= 0) return 0; if (eva <= 0) return 1; return acc >= eva ? 1 - eva / (2 * acc) : acc / (2 * eva); }
+  function lvSum(pairs, levels) { var s = 0; for (var i = 0; i < pairs.length; i++) s += (levels[pairs[i][0]] != null ? levels[pairs[i][0]] : 1) * pairs[i][1]; return s; }
+  function maxHit(B, style, levels, stats) {
+    var f = B.styles[style].mh, L = lvSum(f.levels, levels);
+    if (f.type === "StrengthBonus") { var sb = stats[f.sb] || 0; return Math.max(1, Math.floor(22 + L + (L + 17) * sb / 64)); }
+    var M = stats[f.M] || 0, D = stats[f.D] || 0; return Math.max(1, Math.floor(M * (1 + D) * (1 + (L + 1) / 200)));
+  }
+  function occupiedSlots(B, eq) {
+    var occ = {}; for (var s in eq) { var it = eq[s] && B.items[eq[s]]; if (it && it.occ) it.occ.forEach(function (o) { occ[o] = s; }); } return occ;
+  }
+  var ASTRO_SK_KO = { Attack: "공격", Strength: "힘", Defence: "방어", Hitpoints: "체력", Ranged: "원거리", Magic: "마법", Prayer: "기도", Slayer: "슬레이어" };
+  function astroBonuses(B, cfg) {
+    // cfg.astroSel = node selection shared with the profit tab (pcfg.astro); without it the save's unlocked nodes are used
+    var r = { stats: {}, prot: 0, accPct: {}, xpPct: {}, healPct: 0, foodPres: 0, texts: [], other: [] };
+    var PB = B.profit; if (cfg.astro === false || !PB || !PB.astro) return r;
+    var sel = cfg.astroSel || null;
+    PB.astro.forEach(function (c) {
+      var sv = (PB.save.astro || {})[c.id] || { minor: [], major: [] };
+      c.minor.concat(c.major).forEach(function (n) {
+        var on = sel && sel[c.id] && sel[c.id][n.kind] ? !!sel[c.id][n.kind][n.id] : sv[n.kind].indexOf(n.id) >= 0;
+        if (!on) return;
+        n.cbon.forEach(function (b) {
+          if (b.cond) { r.other.push(c.name + " " + n.name + ": " + b.s + " (조건부)"); return; }
+          if (b.t === "Character" && b.s === "FlatCombatStatValue" && b.cs) r.stats[b.cs] = (r.stats[b.cs] || 0) + b.v;
+          else if (b.t === "Character" && b.s === "FlatProtectionRating") r.prot += b.v;
+          else if (b.t === "Character" && b.s === "PercentAccuracyRating") { var st = b.style || "all"; r.accPct[st] = (r.accPct[st] || 0) + b.v; }
+          else if (b.t === "Experience" && b.s === "PercentXPGained") { if (ASTRO_SK_KO[b.sk]) r.xpPct[b.sk] = (r.xpPct[b.sk] || 0) + b.v; }
+          else if (b.t === "CombatFood" && b.s === "PercentHealing") r.healPct += b.v;
+          else if (b.t === "CombatFood" && b.s === "FoodPreservationChance") r.foodPres += b.v;
+          else r.other.push(c.name + " " + n.name + ": " + b.s);
+        });
+      });
+    });
+    var pc = function (v) { return (v > 0 ? "+" : "") + Math.round(v * 1000) / 10 + "%"; };
+    for (var k in r.stats) r.texts.push(k.replace(/Bonus$/, "") + " " + (r.stats[k] > 0 ? "+" : "") + r.stats[k]);
+    if (r.prot) r.texts.push("Protection +" + r.prot);
+    for (var a in r.accPct) r.texts.push("명중 레이팅 " + pc(r.accPct[a]) + (a === "all" ? "" : " (" + a + ")"));
+    for (var x in r.xpPct) r.texts.push(ASTRO_SK_KO[x] + " XP " + pc(r.xpPct[x]));
+    if (r.healPct) r.texts.push("음식 회복 " + pc(r.healPct));
+    if (r.foodPres) r.texts.push("음식 보존 " + pc(r.foodPres));
+    return r;
+  }
+  function buildPlayer(B, cfg) {
+    var levels = Object.assign({ Attack: 1, Strength: 1, Defence: 1, Ranged: 1, Magic: 1, Prayer: 1, Hitpoints: 10 }, cfg.levels);
+    var stats = {}, pow = 0, prot = 0, light = cfg.extraLight || 0, warnings = [], unmodeled = [], equipped = {};
+    var occ = occupiedSlots(B, cfg.equipment);
+    B.slots.forEach(function (slot) {
+      var id = cfg.equipment[slot.id]; if (!id || occ[slot.id]) return;
+      var it = B.items[id]; if (!it || !it.t) return;
+      equipped[slot.id] = id;
+      for (var k in it.st) stats[k] = (stats[k] || 0) + it.st[k];
+      pow += it.pow || 0; prot += it.prot || 0; light += it.light || 0;
+      if (it.bonus) unmodeled.push(it.n + ": " + it.bonus.join(", "));
+      for (var sk in it.req) if ((levels[sk] || 1) < it.req[sk]) warnings.push(it.n + ": " + sk + " " + it.req[sk] + " 필요 (현재 " + (levels[sk] || 1) + ")");
+    });
+    var astro = astroBonuses(B, cfg);
+    for (var ak in astro.stats) stats[ak] = (stats[ak] || 0) + astro.stats[ak];
+    prot += astro.prot;
+    var wItem = equipped.Weapon ? B.items[equipped.Weapon] : null;
+    var weaponType = (wItem && wItem.w && wItem.w.type) || "Melee";
+    var elements = (wItem && wItem.w && wItem.w.el) || ["Neutral"];
+    var wt = B.weaponTypes[weaponType] || { stances: ["Stab"] }, allowed = wt.stances;
+    var stance = cfg.stance;
+    if (allowed.indexOf(stance) < 0) { var pref = B.player.stanceMap[weaponType]; stance = allowed.indexOf(pref) >= 0 ? pref : allowed[0]; }
+    var st = B.stances[stance], style = st.style, spell = null;
+    if (style === "Magic") {
+      spell = B.spells.filter(function (s) { return s.id === cfg.spell; })[0] || null;
+      if (!spell && !cfg.spell) { // auto: strongest spell the Magic level allows
+        B.spells.forEach(function (s) { if ((s.req.Magic || 1) <= (levels.Magic || 1) && (!spell || s.maxHit > spell.maxHit)) spell = s; });
+      }
+      if (spell) { stats.SpellMaxHit = (stats.SpellMaxHit || 0) + spell.maxHit; elements = [spell.element]; if ((levels.Magic || 1) < (spell.req.Magic || 1)) warnings.push(spell.name + ": Magic " + spell.req.Magic + " 필요"); }
+      else warnings.push("주문을 선택하지 않아 마법 최대타가 1입니다");
+    }
+    if (wItem && wItem.w && wItem.w.ammo) { var am = equipped.Ammo ? B.items[equipped.Ammo] : null; if (!am || am.ammoType !== wItem.w.ammo) warnings.push(wItem.n + "에는 " + wItem.w.ammo + " 탄약이 필요합니다 (게임에서는 공격 불가)"); }
+    var effLevels = Object.assign({}, levels); effLevels.Defence = (effLevels.Defence || 1) + (st.flatDef || 0);
+    var interval = Math.max(250, Math.trunc(stats.AttackInterval || 4000));
+    var maxHp = levels.Hitpoints * 10;
+    var foodItem = B.items[cfg.food], foodHeal = foodItem && foodItem.food ? foodItem.food : 0;
+    if (astro.healPct) foodHeal = Math.floor(foodHeal * (1 + astro.healPct));
+    var threshHp = Math.round(maxHp * cfg.aeThreshold), healAmount = Math.max(1, Math.trunc(foodHeal * cfg.aeEff));
+    return {
+      levels: levels, effLevels: effLevels, stats: stats, pow: pow, prot: prot, light: light, elements: elements, weaponType: weaponType, allowed: allowed,
+      stance: stance, style: style, spell: spell, xpRates: st.xp, interval: interval, maxHp: maxHp, maxHitBase: maxHit(B, style, levels, stats),
+      accuracy: Math.floor(rating(lvSum(B.styles[style].accLv, levels), stats[st.acc] || 0) * (1 + (astro.accPct[style] || 0) + (astro.accPct.all || 0))), combatLevel: Math.floor(lvSum(B.styles[style].clr, levels)),
+      food: cfg.food, foodHeal: foodHeal, aeThreshold: cfg.aeThreshold, aeEff: cfg.aeEff, threshHp: threshHp, healAmount: healAmount,
+      warnings: warnings, unmodeled: unmodeled, equipped: equipped, occupied: occ,
+      xpPct: astro.xpPct, foodPres: astro.foodPres, astroText: astro.texts, astroOther: astro.other
+    };
+  }
+  function playerEvasion(B, P, eStance, eStyle) { return rating(lvSum(B.styles[eStyle].evaLv, P.effLevels), P.stats[B.stances[eStance].eva] || 0); }
+  function enemyEvasion(B, e, P) { return rating(lvSum(B.styles[P.style].evaLv, e.levels), e.stats[B.stances[P.stance].eva] || 0); }
+  function maxBurst(e) {
+    var worst = e.maxHit;
+    e.specials.forEach(function (sp) { var tot = 0; sp.atk.hits.forEach(function (h) { h.dmg.forEach(function (d) { if (d.t === "NormalDamage" || d.t === "MaxHit") tot += h.count * e.maxHit * d.pct; }); }); worst = Math.max(worst, tot); });
+    return worst;
+  }
+  function playerResVs(B, P, e) { var base = (e.pow + P.prot) > 0 ? P.prot / (e.pow + P.prot) : 0; return Math.min(0.7, base * B.triangle[P.style + "|" + e.style][1]); }
+
+  function run(B, P, seq, hours, seed, darkness) {
+    var rng = mulberry32(seed), randint = function (n) { return 1 + Math.floor(rng() * n); };
+    var T = Math.trunc(hours * 3600 * 1000), RESPAWN = B.respawnMs;
+    var dark = Math.max(0, 1 - 0.05 * Math.max(0, darkness - P.light));
+    var res = { kills: 0, deaths: 0, food: 0, healed: 0, dmgTaken: 0, dmgDealt: 0, xp: {}, pAtt: 0, pHit: 0, eAtt: 0, eHit: 0, loops: 0, fightMs: 0 };
+    var hp = P.maxHp, t = 0, idx = 0, thresh = P.threshHp, heal = P.healAmount;
+    var xpPct = P.xpPct || {}, foodPres = P.foodPres || 0;
+    function addXp(m) { for (var k in P.xpRates) res.xp[k] = (res.xp[k] || 0) + P.xpRates[k] * m * (1 + (xpPct[k] || 0)); }
+    function spawn(i, start) {
+      var e = seq[i % seq.length], tri = B.triangle[P.style + "|" + e.style], el = 1;
+      P.elements.forEach(function (pe) { el += (B.elemental[pe + "|" + e.element] || 1) - 1; });
+      return {
+        e: e, hp: e.maxHp, ward: e.maxWard, armourBroken: false, start: start,
+        pMaxhit: Math.max(1, Math.floor(P.maxHitBase * tri[0] * el)),
+        eRes: Math.min(0.7, (P.pow + e.prot) > 0 ? e.prot / (P.pow + e.prot) : 0),
+        pRes: Math.min(0.7, ((e.pow + P.prot) > 0 ? P.prot / (e.pow + P.prot) : 0) * tri[1]),
+        pHit: hitChance(P.accuracy * dark, enemyEvasion(B, e, P)),
+        eHit: hitChance(e.accuracy, playerEvasion(B, P, e.stance, e.style) * dark)
+      };
+    }
+    var f = spawn(0, 0), pNext = P.interval, eNext = f.e.interval, dots = [], stunned = 0;
+    var fb = spawn(seq.length - 1, 0), info = { pHit: fb.pHit, eHit: fb.eHit, pMaxhit: fb.pMaxhit, eRes: fb.eRes, pRes: fb.pRes };
+    function takeDamage(a) {
+      a = Math.max(1, Math.trunc(a)); hp -= a; res.dmgTaken += a;
+      if (hp <= 0) { res.deaths++; hp = P.maxHp; return true; }
+      if (hp <= thresh) { var n = Math.max(1, Math.floor((P.maxHp - hp) / heal)), h = Math.min(P.maxHp - hp, n * heal); hp += h; res.healed += h; for (var fi = 0; fi < n; fi++) if (!foodPres || rng() >= foodPres) res.food++; }
+      return false;
+    }
+    function afterDeath() { dots = []; stunned = 0; var ts = t + RESPAWN; idx = 0; f = spawn(0, ts); pNext = ts + P.interval; eNext = ts + f.e.interval; }
+    var guard = 0;
+    while (true) {
+      if (++guard > 5e6) break;
+      var dotNext = Infinity; for (var i = 0; i < dots.length; i++) if (dots[i][0] < dotNext) dotNext = dots[i][0];
+      t = Math.min(pNext, eNext, dotNext); if (t >= T) { t = T; break; }
+      var e = f.e;
+      if (dotNext <= pNext && dotNext <= eNext) {
+        var diedD = false;
+        for (var j = 0; j < dots.length; j++) { var d = dots[j]; if (d[0] <= t) { d[0] += d[3]; d[1] -= 1; if (takeDamage(Math.max(1, Math.floor(d[2] * (1 - f.pRes))))) { diedD = true; break; } } }
+        dots = diedD ? [] : dots.filter(function (d) { return d[1] > 0; });
+        if (diedD) afterDeath();
+        continue;
+      }
+      if (pNext <= eNext) {
+        pNext += P.interval;
+        if (stunned > 0) { stunned--; continue; }
+        res.pAtt++;
+        if (rng() < f.pHit) {
+          res.pHit++;
+          var dmg = randint(f.pMaxhit); dmg = Math.floor(dmg * (1 - f.eRes));
+          if (f.ward > 0) { dmg = Math.floor(dmg * (1 - f.ward / e.maxWard)); f.ward--; }
+          if (e.armour && !f.armourBroken) { dmg -= e.armour; if (dmg >= e.armour) f.armourBroken = true; }
+          dmg = Math.max(1, dmg);
+          var dealt = Math.min(dmg, f.hp); f.hp -= dmg; res.dmgDealt += dealt; addXp(dealt);
+          if (f.hp <= 0) {
+            res.kills++; res.fightMs += t - f.start; if (e.killXp) addXp(e.killXp);
+            idx++; if (idx % seq.length === 0) res.loops++;
+            var ts = t + RESPAWN; f = spawn(idx, ts); pNext = ts + P.interval; eNext = ts + f.e.interval; dots = [];
+          }
+        }
+        continue;
+      }
+      eNext += e.interval; res.eAtt++;
+      var special = null, roll = rng();
+      if (roll < e.specialTotal) { var acc = 0; for (var s = 0; s < e.specials.length; s++) { acc += e.specials[s].ch; if (roll < acc) { special = e.specials[s].atk; break; } } if (!special) special = e.specials[e.specials.length - 1].atk; }
+      var died = false;
+      if (!special) {
+        if (rng() < f.eHit) {
+          res.eHit++;
+          var nd = Math.max(1, Math.floor(randint(e.maxHit) * (1 - f.pRes)));
+          died = takeDamage(nd);
+          if (e.lifesteal) f.hp = Math.min(e.maxHp, f.hp + Math.floor(nd * e.lifesteal));
+          for (var q = 0; q < e.onhitDots.length; q++) { var od = e.onhitDots[q]; if (!died && rng() < od.ch) dots.push([t + od.interval, od.count, Math.max(1, Math.floor(e.maxHit * od.pct)), od.interval]); }
+        }
+      } else {
+        var landed = false;
+        outer: for (var hi = 0; hi < special.hits.length; hi++) {
+          var h = special.hits[hi];
+          for (var c = 0; c < h.count; c++) {
+            if (special.avoidable && rng() >= f.eHit) continue;
+            landed = true; res.eHit++;
+            var sd = 0;
+            for (var di = 0; di < h.dmg.length; di++) {
+              var dm = h.dmg[di];
+              if (dm.t === "NormalDamage") sd += randint(e.maxHit) * dm.pct;
+              else if (dm.t === "MaxHit") sd += e.maxHit * dm.pct;
+              else if (dm.t === "CurrentHitpoints") sd += hp * dm.pct;
+              else if (dm.t === "MaxHitpoints") sd += P.maxHp * dm.pct;
+              else sd += e.maxHit * dm.pct;
+            }
+            sd = Math.max(1, Math.floor(sd * (1 - f.pRes)));
+            if (takeDamage(sd)) { died = true; break outer; }
+            if (e.lifesteal) f.hp = Math.min(e.maxHp, f.hp + Math.floor(sd * e.lifesteal));
+          }
+        }
+        if (landed && !died) {
+          for (var oi = 0; oi < special.onhit.length; oi++) {
+            var eff = special.onhit[oi]; if (rng() >= eff.ch) continue;
+            if (eff.kind === "dot") dots.push([t + eff.interval, eff.count, Math.max(1, Math.floor(e.maxHit * eff.pct)), eff.interval]);
+            else if (eff.kind === "stun") stunned += eff.turns || 1;
+          }
+        }
+      }
+      if (e.eotHeal && !died) f.hp = Math.min(e.maxHp, f.hp + Math.floor(f.hp * e.eotHeal));
+      if (died) afterDeath();
+      if (res.deaths >= 30 && res.kills === 0) break;
+    }
+    var hrs = Math.max(t, 1) / 3600000, xpH = {}; for (var k in res.xp) xpH[k] = res.xp[k] / hrs;
+    return Object.assign({
+      hours: hrs, killsH: res.kills / hrs, deathsH: res.deaths / hrs, foodH: res.food / hrs, healedH: res.healed / hrs, dmgTakenH: res.dmgTaken / hrs,
+      loopsH: res.loops / hrs, xpH: xpH, avgFightS: res.kills ? res.fightMs / res.kills / 1000 : null, kills: res.kills, deaths: res.deaths,
+      pAtt: res.pAtt, pHitN: res.pHit, eAtt: res.eAtt, eHitN: res.eHit
+    }, info);
+  }
+  function runTarget(B, P, tg, hours, seed) {
+    var seq = tg.seq.map(function (id) { return B.enemies[id]; });
+    var r = run(B, P, seq, hours, seed, tg.darkness);
+    var burst = 0, ecl = 0, ehp = 0, emh = 0, styles = {}, notes = {};
+    seq.forEach(function (e) {
+      burst = Math.max(burst, Math.floor(maxBurst(e) * (1 - playerResVs(B, P, e)))); ecl = Math.max(ecl, e.cl); ehp += e.maxHp; emh = Math.max(emh, e.maxHit);
+      styles[e.style] = 1; e.unmodeled.forEach(function (n) { notes[n] = 1; });
+    });
+    var comb = 0; COMBAT_SKILLS.forEach(function (k) { comb += r.xpH[k] || 0; });
+    return Object.assign({
+      id: tg.id, kind: tg.kind, name: tg.name, area: tg.area, category: tg.category, difficulty: tg.difficulty, darkness: tg.darkness, unlock: tg.unlock, seq: tg.seq,
+      enemyCl: ecl, enemyHp: ehp, enemyStyle: Object.keys(styles).sort().join("/"), enemyMaxhit: emh, burst: burst, safe: burst <= P.threshHp,
+      combatXpH: comb, hpXpH: r.xpH.Hitpoints || 0, xpPerFood: r.foodH > 0 ? comb / r.foodH : null, notes: Object.keys(notes).sort(), simHours: hours
+    }, r);
+  }
+  return { buildPlayer: buildPlayer, run: run, runTarget: runTarget, maxBurst: maxBurst, playerResVs: playerResVs, playerEvasion: playerEvasion, enemyEvasion: enemyEvasion, hitChance: hitChance, COMBAT_SKILLS: COMBAT_SKILLS };
+})();
+</script>
+
+<script>
+(function () {
+"use strict";
+var B = JSON.parse(document.getElementById("bundle").textContent);
+var $ = function (s) { return document.querySelector(s); };
+var fmt = function (v, d) { return v == null || isNaN(v) ? "–" : Number(v).toLocaleString("ko-KR", { minimumFractionDigits: d, maximumFractionDigits: d }); };
+var pct = function (v) { return v == null ? "–" : Math.round(v * 100) + "%"; };
+var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
+var LS = { get: function (k, d) { try { var v = localStorage.getItem("m2sim." + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }, set: function (k, v) { try { localStorage.setItem("m2sim." + k, JSON.stringify(v)); } catch (e) {} } };
+var SKILLS = ["Attack", "Strength", "Defence", "Hitpoints", "Ranged", "Magic", "Prayer"];
+var SKILL_KO = { Attack: "공격", Strength: "힘", Defence: "방어", Hitpoints: "체력", Ranged: "원거리", Magic: "마법", Prayer: "기도" };
+var DIFF_KO = { VeryEasy: "매우 쉬움", Easy: "쉬움", Medium: "보통", Hard: "어려움", VeryHard: "매우 어려움", Insane: "극악", Elite: "엘리트" };
+var STR_STAT = { Melee: "MeleeStrengthBonus", Ranged: "RangedStrengthBonus", Magic: "MagicDamageBonus" };
+var DEF_STATS = Object.keys(B.stances).map(function (s) { return B.stances[s].eva; });
+var TIERS = [{ n: "기본", t: 25, e: 100 }, { n: "Auto Eat 2", t: 30, e: 105 }, { n: "Auto Eat 3", t: 35, e: 110 }];
+
+// ---------------- config ----------------
+function defaultCfg() {
+  var eq = {}; B.slots.forEach(function (s) { eq[s.id] = null; });
+  for (var s in B.player.equipment) { var v = B.player.equipment[s]; if (v[1] !== -1 && B.items[v[0]]) eq[s] = v[0]; }
+  var food = B.player.food && B.items[B.player.food[0]] && B.items[B.player.food[0]].food ? B.player.food[0] : (B.items.Trout ? "Trout" : Object.keys(B.items).filter(function (k) { return B.items[k].food; })[0]);
+  return { levels: Object.assign({}, B.player.levels), equipment: eq, stance: null, spell: null, food: food, aeThreshold: 0.25, aeEff: 1.0, extraLight: 0, astro: true };
+}
+var cfg = LS.get("cfg", null) || defaultCfg();
+// guard against stale saved configs
+(function () { var d = defaultCfg(); for (var k in d) if (cfg[k] === undefined) cfg[k] = d[k]; B.slots.forEach(function (s) { if (!(s.id in cfg.equipment)) cfg.equipment[s.id] = null; }); })();
+var P0 = Engine.buildPlayer(B, defaultCfg());
+var P = Engine.buildPlayer(B, cfg);
+var rows = null, baseline = null, lastRunCfg = null, selectedId = null;
+var favorites = LS.get("fav", {}), presets = LS.get("presets", {});
+var ui = { q: "", kind: "all", safe: "all", diff: "", favOnly: false, view: "table", sortKey: "combatXpH", sortAsc: false };
+
+function foodQty(id) { if (B.player.food && B.player.food[0] === id) return B.player.food[1]; return B.player.bank[id] || 0; }
+function astroSel() { var p = LS.get("pcfg", null); return p && p.astro ? p.astro : null; }
+function changed() { cfg.astroSel = astroSel(); P = Engine.buildPlayer(B, cfg); LS.set("cfg", cfg); renderSide(); renderStats(); if (rows && lastRunCfg && JSON.stringify(lastRunCfg) !== JSON.stringify(cfg)) $("#stale").classList.remove("hidden"); }
+
+// ---------------- sidebar ----------------
+function renderSide() { renderLevels(); renderSlots(); renderStances(); renderFood(); }
+
+function renderLevels() {
+  var el = $("#levels"); el.innerHTML = "";
+  SKILLS.forEach(function (k) {
+    var l = document.createElement("label"); var was = B.player.levels[k] || 1;
+    l.innerHTML = SKILL_KO[k] + " <span><input type=number min=1 max=120 value=" + (cfg.levels[k] || 1) + " data-k=" + k + ">" + (cfg.levels[k] !== was ? "<span class=was>세이브 " + was + "</span>" : "") + "</span>";
+    l.querySelector("input").addEventListener("change", function (e) { cfg.levels[k] = Math.max(1, Math.min(120, +e.target.value || 1)); changed(); });
+    el.appendChild(l);
+  });
+  $("#lvHint").textContent = "전투 레벨 " + P.combatLevel;
+}
+
+function itemSummary(it) {
+  if (!it) return "";
+  var st = it.st || {}, parts = [];
+  var acc = st[B.stances[P.stance].acc] || 0, str = st[STR_STAT[P.style]] || 0;
+  var def = 0; DEF_STATS.forEach(function (k) { def += st[k] || 0; }); def = Math.round(def / DEF_STATS.length);
+  if (st.AttackInterval) parts.push((st.AttackInterval / 1000).toFixed(1) + "s");
+  parts.push("명중 " + acc, "힘 " + (P.style === "Magic" ? Math.round(str * 100) + "%" : str), "방어 " + def);
+  if (it.prot) parts.push("Prot " + it.prot); if (it.pow) parts.push("Pow " + it.pow); if (it.light) parts.push("Light " + it.light);
+  return parts.join(" · ");
+}
+
+function renderSlots() {
+  var el = $("#slots"); el.innerHTML = "";
+  B.slots.forEach(function (slot) {
+    var id = cfg.equipment[slot.id], it = id && B.items[id], occ = P.occupied[slot.id];
+    var d = document.createElement("div"); d.className = "slot" + (!it ? " empty" : "") + (occ ? " locked" : "");
+    var saveId = B.player.equipment[slot.id] && B.player.equipment[slot.id][1] !== -1 ? B.player.equipment[slot.id][0] : null;
+    if ((id || null) !== saveId) d.classList.add("changed");
+    var bad = it && Object.keys(it.req || {}).some(function (k) { return (cfg.levels[k] || 1) < it.req[k]; });
+    d.innerHTML = "<span class=lbl>" + esc(slot.name) + "</span><span class=name>" + (occ ? "<span class=faint>(" + esc(B.items[cfg.equipment[occ]].n) + " 사용 중)</span>" : it ? esc(it.n) : "비어 있음") + "</span>"
+      + (it && !occ ? "<span class=st>" + esc(itemSummary(it)) + (bad ? " <span class=bad>레벨 부족</span>" : "") + "</span>" : "")
+      + (it && it.qty && B.player.equipment[slot.id] && B.player.equipment[slot.id][0] === id ? "<span class=qty>x" + B.player.equipment[slot.id][1] + "</span>" : "");
+    if (!occ) d.addEventListener("click", function (ev) { openPicker(slot, d); });
+    el.appendChild(d);
+  });
+  var n = Object.keys(P.equipped).length; $("#eqHint").textContent = n + "칸 · " + B.weaponTypes[P.weaponType].name;
+}
+
+function renderStances() {
+  var el = $("#stances"); el.innerHTML = "";
+  P.allowed.forEach(function (sid) {
+    var st = B.stances[sid]; var l = document.createElement("label"); if (sid === P.stance) l.classList.add("on");
+    var xp = Object.keys(st.xp).filter(function (k) { return k !== "Hitpoints"; }).map(function (k) { return SKILL_KO[k] + " ×" + st.xp[k]; }).join(", ");
+    l.innerHTML = "<input type=radio name=stance value=" + sid + ">" + esc(st.name) + (st.flatDef ? " <span class=muted>(방어 +" + st.flatDef + ")</span>" : "") + "<span class=xp>" + xp + "</span>";
+    l.addEventListener("click", function () { cfg.stance = sid; changed(); });
+    el.appendChild(l);
+  });
+  $("#stHint").textContent = B.styles[P.style].name + " / " + B.stances[P.stance].name;
+  var sr = $("#spellRow"); sr.classList.toggle("hidden", P.style !== "Magic");
+  if (P.style === "Magic") {
+    var sel = $("#spell"); sel.innerHTML = "<option value=''>자동 (레벨에 맞는 최강 주문" + (P.spell && !cfg.spell ? ": " + esc(P.spell.name) : "") + ")</option>";
+    var books = {}; B.spells.forEach(function (s) { (books[s.book] = books[s.book] || []).push(s); });
+    Object.keys(books).forEach(function (b) {
+      var og = document.createElement("optgroup"); og.label = b;
+      books[b].sort(function (a, c) { return (a.req.Magic || 0) - (c.req.Magic || 0); }).forEach(function (s) {
+        var o = document.createElement("option"); o.value = s.id; var locked = (cfg.levels.Magic || 1) < (s.req.Magic || 1);
+        o.textContent = s.name + " (최대타 " + s.maxHit + ", " + s.element + ", Lv " + (s.req.Magic || 1) + ")" + (locked ? " 🔒" : ""); if (s.id === cfg.spell) o.selected = true; og.appendChild(o);
+      }); sel.appendChild(og);
+    });
+    sel.onchange = function () { cfg.spell = sel.value || null; changed(); };
+  }
+  $("#extraLight").value = cfg.extraLight || 0;
+  $("#astroOn").checked = cfg.astro !== false;
+  $("#astroHint").textContent = cfg.astro === false ? "" : (P.astroText.length ? P.astroText.join(" · ") : "적용할 해금 노드 없음");
+}
+
+function renderFood() {
+  var sel = $("#food"); sel.innerHTML = "";
+  var foods = Object.keys(B.items).filter(function (k) { return B.items[k].food; });
+  var owned = foods.filter(function (k) { return foodQty(k) > 0; }).sort(function (a, b) { return B.items[b].food - B.items[a].food; });
+  var rest = foods.filter(function (k) { return foodQty(k) <= 0; }).sort(function (a, b) { return B.items[b].food - B.items[a].food; });
+  function grp(label, list) { if (!list.length) return; var og = document.createElement("optgroup"); og.label = label; list.forEach(function (k) { var o = document.createElement("option"); o.value = k; var q = foodQty(k); o.textContent = B.items[k].n + " (회복 " + B.items[k].food + (q ? ", 보유 " + q.toLocaleString() : "") + ")"; if (k === cfg.food) o.selected = true; og.appendChild(o); }); sel.appendChild(og); }
+  grp("보유 중", owned); grp("전체", rest);
+  sel.onchange = function () { cfg.food = sel.value; changed(); };
+  var tiers = $("#tiers"); tiers.innerHTML = "";
+  TIERS.forEach(function (tr) {
+    var l = document.createElement("label"); var on = Math.round(cfg.aeThreshold * 100) === tr.t && Math.round(cfg.aeEff * 100) === tr.e; if (on) l.classList.add("on");
+    l.innerHTML = "<input type=radio name=tier>" + tr.n + "<small>" + tr.t + "% / 효율 " + tr.e + "%</small>";
+    l.addEventListener("click", function () { cfg.aeThreshold = tr.t / 100; cfg.aeEff = tr.e / 100; changed(); });
+    tiers.appendChild(l);
+  });
+  $("#aeT").value = Math.round(cfg.aeThreshold * 100); $("#aeE").value = Math.round(cfg.aeEff * 100);
+  var perEat = Math.max(1, Math.floor((P.maxHp - P.threshHp) / P.healAmount));
+  $("#foodNote").innerHTML = "최대 HP <b>" + P.maxHp + "</b> → HP <b>" + P.threshHp + "</b> 이하에서 자동식사. 1개당 <b>" + P.healAmount + "</b> 회복, 한 번에 최대 약 " + perEat + "개" + (foodQty(cfg.food) === 0 ? " · <span class=warn>보유 0개 — 게임에서 음식을 채우세요</span>" : "");
+  $("#fdHint").textContent = (B.items[cfg.food] ? B.items[cfg.food].n : "?") + " · " + Math.round(cfg.aeThreshold * 100) + "%";
+}
+
+// ---------------- item picker ----------------
+var picker = null;
+function closePicker() { if (picker) { picker.pop.remove(); picker.scrim.remove(); picker = null; } }
+function openPicker(slot, anchor) {
+  closePicker();
+  var pop = document.createElement("div"); pop.className = "popover";
+  var scrim = document.createElement("div"); scrim.className = "scrim"; scrim.addEventListener("click", closePicker);
+  pop.innerHTML = "<div class=head><b>" + esc(slot.name) + "</b><input type=search placeholder='아이템 검색'><button class='small ghost' data-clear>비우기</button></div><div class=list></div>";
+  document.body.appendChild(scrim); document.body.appendChild(pop);
+  var r = anchor.getBoundingClientRect(); pop.style.left = Math.min(r.right + 8, window.innerWidth - 430) + "px"; pop.style.top = Math.max(8, Math.min(r.top, window.innerHeight - pop.offsetHeight - 8)) + "px";
+  picker = { pop: pop, scrim: scrim };
+  var cur = cfg.equipment[slot.id], curIt = cur && B.items[cur];
+  var list = Object.keys(B.items).filter(function (k) { var it = B.items[k]; return it.t === slot.fits || (slot.fits === "Ring" && it.t === "Ring"); });
+  if (slot.id === "Offhand") list = list.filter(function (k) { return !(B.items[k].occ || []).length || B.items[k].t === "Offhand"; });
+  var ownedOnly = $("#ownedOnly").checked;
+  function key(it) { // comparison value for the current style: accuracy + strength + avg def + prot
+    var st = it.st || {}, def = 0; DEF_STATS.forEach(function (k) { def += st[k] || 0; });
+    return { acc: st[B.stances[P.stance].acc] || 0, str: st[STR_STAT[P.style]] || 0, def: def / DEF_STATS.length, prot: it.prot || 0, pow: it.pow || 0 };
+  }
+  function score(it) { var k = key(it); return k.acc + k.str * 2 + k.def + k.prot * 3 + k.pow * 3; }
+  function render(q) {
+    q = (q || "").toLowerCase();
+    var lst = pop.querySelector(".list"); lst.innerHTML = "";
+    var groups = [["보유 중", []], ["착용 가능", []], ["레벨 부족", []]];
+    list.forEach(function (k) {
+      var it = B.items[k]; if (q && it.n.toLowerCase().indexOf(q) < 0 && k.toLowerCase().indexOf(q) < 0) return;
+      var owned = (B.player.bank[k] || 0) > 0 || Object.keys(B.player.equipment).some(function (s) { return B.player.equipment[s][0] === k; });
+      var locked = Object.keys(it.req || {}).some(function (s) { return (cfg.levels[s] || 1) < it.req[s]; });
+      groups[owned ? 0 : locked ? 2 : 1][1].push(k);
+    });
+    if (!ownedOnly) { groups[1][1] = groups[0][1].concat(groups[1][1]); groups[0][1] = []; }
+    var curKey = curIt ? key(curIt) : { acc: 0, str: 0, def: 0, prot: 0, pow: 0 };
+    groups.forEach(function (g) {
+      if (!g[1].length) return;
+      g[1].sort(function (a, b) { return score(B.items[b]) - score(B.items[a]); });
+      var gh = document.createElement("div"); gh.className = "grp"; gh.textContent = g[0] + " (" + g[1].length + ")"; lst.appendChild(gh);
+      g[1].forEach(function (k) {
+        var it = B.items[k], kk = key(it), d = document.createElement("div"); d.className = "it" + (k === cur ? " cur" : "") + (g[0] === "레벨 부족" ? " locked" : "");
+        var req = Object.keys(it.req || {}).map(function (s) { return SKILL_KO[s] || s; }).map(function (s, i) { var sk = Object.keys(it.req)[i]; return s + " " + it.req[sk]; }).join(", ");
+        var dl = score(it) - score(curIt || {}); var dlTxt = curIt ? (dl > 0 ? "<span class=good>▲" + Math.round(dl) + "</span>" : dl < 0 ? "<span class=crit>▼" + Math.round(-dl) + "</span>" : "<span class=faint>=</span>") : "";
+        d.innerHTML = "<span class=n>" + esc(it.n) + (req ? "<small>" + esc(req) + "</small>" : "") + (it.bonus ? "<small title='" + esc(it.bonus.join("\n")) + "'>★보너스</small>" : "") + "</span>"
+          + "<span class=s>" + (it.st && it.st.AttackInterval ? (it.st.AttackInterval / 1000).toFixed(1) + "s · " : "") + "명중 <b>" + kk.acc + "</b> 힘 <b>" + (P.style === "Magic" ? Math.round(kk.str * 100) + "%" : kk.str) + "</b> 방어 <b>" + Math.round(kk.def) + "</b>" + (kk.prot ? " Prot <b>" + kk.prot + "</b>" : "") + (kk.pow ? " Pow <b>" + kk.pow + "</b>" : "") + "</span><span class=dl>" + dlTxt + "</span>";
+        d.addEventListener("click", function () { cfg.equipment[slot.id] = k; if (it.occ) it.occ.forEach(function (o) { /* keep other slot's item id; engine ignores it while occupied */ }); closePicker(); changed(); });
+        lst.appendChild(d);
+      });
+    });
+    if (!lst.children.length) lst.innerHTML = "<div class='grp'>일치하는 아이템 없음</div>";
+  }
+  render("");
+  var inp = pop.querySelector("input"); inp.focus(); inp.addEventListener("input", function () { render(inp.value); });
+  pop.querySelector("[data-clear]").addEventListener("click", function () { cfg.equipment[slot.id] = null; closePicker(); changed(); });
+  document.addEventListener("keydown", function esc_(e) { if (e.key === "Escape") { closePicker(); document.removeEventListener("keydown", esc_); } });
+}
+
+// ---------------- stats strip ----------------
+function renderStats() {
+  var el = $("#stats"); el.innerHTML = "";
+  var tri = B.triangle;
+  var items = [
+    ["전투 레벨", P.combatLevel, P0.combatLevel, 0],
+    ["최대 HP", P.maxHp, P0.maxHp, 0],
+    ["최대 타격", P.maxHitBase, P0.maxHitBase, 0, "삼각형/원소 보정 전"],
+    ["명중 레이팅", P.accuracy, P0.accuracy, 0],
+    ["공격 간격", P.interval / 1000, P0.interval / 1000, 1, "초", true],
+    ["Power", P.pow, P0.pow, 0], ["Protection", P.prot, P0.prot, 0],
+    ["Light", P.light, P0.light, 0],
+    ["자동식사 임계", P.threshHp, P0.threshHp, 0, "HP"],
+    ["이론 DPS", P.maxHitBase / 2 / (P.interval / 1000), P0.maxHitBase / 2 / (P0.interval / 1000), 1, "명중 100% 가정"]
+  ];
+  items.forEach(function (it) {
+    var d = document.createElement("div"); d.className = "stat"; var v = it[1], v0 = it[2], dec = it[3], lowerBetter = it[5];
+    var diff = v - v0, cls = diff === 0 ? "" : ((diff > 0) !== !!lowerBetter ? " up" : " down");
+    d.innerHTML = "<div class=k>" + it[0] + (it[4] ? " <span class=faint>" + it[4] + "</span>" : "") + "</div><div class=v>" + fmt(v, dec) + "</div><div class='d" + cls + "'>" + (diff === 0 ? "세이브와 동일" : (diff > 0 ? "▲ " : "▼ ") + fmt(Math.abs(diff), dec) + " (세이브 " + fmt(v0, dec) + ")") + "</div>";
+    el.appendChild(d);
+  });
+  $("#warnings").innerHTML = P.warnings.map(function (w) { return "<div>⚠ " + esc(w) + "</div>"; }).join("");
+  $("#unmodeled").innerHTML = (P.unmodeled.length ? "미반영 장비 보너스: " + esc(P.unmodeled.join(" · ")) : "") + (P.astroOther && P.astroOther.length ? (P.unmodeled.length ? "<br>" : "") + "미반영 점성술 노드: " + esc(P.astroOther.join(" · ")) : "");
+}
+
+// ---------------- running ----------------
+var worker = null, running = false;
+function makeWorker() {
+  if (worker) return worker;
+  try {
+    var src = document.getElementById("engine").textContent + "\nvar B=null;self.onmessage=function(ev){var m=ev.data;if(m.type==='init'){B=m.B;return;}var P=Engine.buildPlayer(B,m.cfg);var rows=[];var all=B.targets;var tg=all.filter(function(t){return m.ids.indexOf(t.id)>=0;});tg.forEach(function(t,i){rows.push(Engine.runTarget(B,P,t,m.hours,m.seed+all.indexOf(t)));if(i%6===0)postMessage({type:'progress',i:i+1,n:tg.length,job:m.job});});postMessage({type:'done',rows:rows,job:m.job});};";
+    worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+    worker.postMessage({ type: "init", B: B });
+    worker.onmessage = function (ev) { onWorkerMsg(ev.data); };
+    worker.onerror = function (e) { console.error(e); worker = null; };
+  } catch (e) { console.warn("Worker unavailable, running inline", e); worker = null; }
+  return worker;
+}
+var pending = {};
+function onWorkerMsg(m) {
+  if (m.type === "progress") setProgress(m.i / m.n, m.i + " / " + m.n);
+  else if (m.type === "done") { var cb = pending[m.job]; delete pending[m.job]; if (cb) cb(m.rows); }
+}
+var jobSeq = 0;
+function simulate(ids, hours, seed, cb) {
+  var job = ++jobSeq;
+  var w = makeWorker();
+  if (w) { pending[job] = cb; w.postMessage({ type: "run", cfg: cfg, ids: ids, hours: hours, seed: seed, job: job }); return; }
+  // inline fallback (chunked)
+  var Pr = Engine.buildPlayer(B, cfg), out = [], tg = B.targets.filter(function (t) { return ids.indexOf(t.id) >= 0; }), i = 0;
+  (function step() { var end = Math.min(tg.length, i + 4); for (; i < end; i++) out.push(Engine.runTarget(B, Pr, tg[i], hours, seed + B.targets.indexOf(tg[i]))); setProgress(i / tg.length, i + " / " + tg.length); if (i < tg.length) setTimeout(step, 0); else cb(out); })();
+}
+function setProgress(f, txt) { $("#progress .bar").style.width = Math.round(f * 100) + "%"; $("#progress .txt").textContent = txt; }
+function runAll() {
+  if (running) return; running = true; $("#run").disabled = true; setProgress(0, "준비…");
+  var hours = +$("#hours").value, seed = +$("#seed").value || 1, t0 = performance.now();
+  var ids = B.targets.map(function (t) { return t.id; });
+  simulate(ids, hours, seed, function (out) {
+    rows = out; lastRunCfg = JSON.parse(JSON.stringify(cfg)); running = false; $("#run").disabled = false;
+    setProgress(1, out.length + "개 완료 · " + ((performance.now() - t0) / 1000).toFixed(1) + "s"); $("#stale").classList.add("hidden"); $("#empty").classList.add("hidden");
+    renderResults(); if (selectedId) renderDetail(selectedId);
+  });
+}
+function runOne(id, hours) {
+  if (running) return; running = true; $("#run").disabled = true; setProgress(0, "정밀 시뮬…");
+  simulate([id], hours, +$("#seed").value || 1, function (out) {
+    running = false; $("#run").disabled = false; setProgress(1, id + " " + hours + "시간 완료");
+    if (rows) { var i = rows.findIndex(function (r) { return r.id === id; }); if (i >= 0) rows[i] = out[0]; else rows.push(out[0]); } else rows = out;
+    renderResults(); renderDetail(id);
+  });
+}
+
+// ---------------- results table ----------------
+var COLS = [
+  { k: "fav", l: "★", cls: "fav" },
+  { k: "name", l: "대상", left: true, f: function (r) { return "<span class='badge " + r.kind + "'>" + (r.kind === "dungeon" ? "던전" : "적") + "</span><span class=nm>" + esc(r.name) + "</span>" + (r.simHours && lastRunCfg && r.simHours !== +$("#hours").value ? "<span class=sub>" + r.simHours + "h</span>" : ""); }, s: function (r) { return r.name; } },
+  { k: "area", l: "지역", left: true, f: function (r) { return esc(r.area) + (r.darkness ? "<span class=sub>암흑 " + r.darkness + "</span>" : ""); }, s: function (r) { return r.area; } },
+  { k: "enemyCl", l: "적 CL", f: function (r) { return r.enemyCl; } },
+  { k: "killsH", l: "킬/h", f: function (r) { return fmt(r.killsH, 1) + (r.kind === "dungeon" ? "<span class=sub>완주 " + fmt(r.loopsH, 1) + "</span>" : ""); } },
+  { k: "combatXpH", l: "전투 XP/h", f: function (r) { return fmt(r.combatXpH, 0) + delta(r, "combatXpH", 0); }, title: function (r) { return Object.keys(r.xpH).map(function (k) { return (SKILL_KO[k] || k) + " " + fmt(r.xpH[k], 0); }).join(", "); } },
+  { k: "hpXpH", l: "HP XP/h", f: function (r) { return fmt(r.hpXpH, 0); } },
+  { k: "foodH", l: "음식/h", f: function (r) { return fmt(r.foodH, 1) + delta(r, "foodH", 1, true); } },
+  { k: "xpPerFood", l: "XP/음식", f: function (r) { return r.xpPerFood == null ? "∞" : fmt(r.xpPerFood, 0); }, s: function (r) { return r.xpPerFood == null ? 1e12 : r.xpPerFood; } },
+  { k: "pHit", l: "내 명중", f: function (r) { return pct(r.pHit); } },
+  { k: "eHit", l: "적 명중", f: function (r) { return pct(r.eHit); } },
+  { k: "burst", l: "적 최대폭발", f: function (r) { return r.burst + "<span class=sub>/ " + (lastRunCfg ? Math.round(Engine.buildPlayer(B, lastRunCfg).threshHp) : "") + "</span>"; }, title: function () { return "한 번의 공격 행동으로 받을 수 있는 최대 피해 / 자동식사 임계 HP"; } },
+  { k: "deathsH", l: "사망/h", f: function (r) { return fmt(r.deathsH, 2); } },
+  { k: "safe", l: "안전", f: function (r) { return r.deathsH > 0 ? "<span class=safe-ic>✕ 사망</span>" : r.safe ? "<span class='safe-ic good'>● 안전</span>" : "<span class='safe-ic warn'>▲ 위험</span>"; }, s: function (r) { return r.deathsH > 0 ? 0 : r.safe ? 2 : 1; } }
+];
+function delta(r, k, dec, lowerBetter) {
+  if (!baseline) return ""; var b = baseline[r.id]; if (!b) return "<span class=d>기준 없음</span>";
+  var d = r[k] - b[k]; if (Math.abs(d) < Math.pow(10, -dec) / 2) return "<span class=d>=</span>";
+  var good = (d > 0) !== !!lowerBetter; return "<span class='d " + (good ? "up" : "down") + "'>" + (d > 0 ? "+" : "−") + fmt(Math.abs(d), dec) + "</span>";
+}
+function filtered() {
+  if (!rows) return [];
+  var q = ui.q.toLowerCase();
+  var out = rows.filter(function (r) {
+    if (ui.kind !== "all" && r.kind !== ui.kind) return false;
+    if (ui.safe === "safe" && !(r.safe && r.deathsH === 0)) return false;
+    if (ui.safe === "nodeath" && r.deathsH > 0) return false;
+    if (ui.diff && r.difficulty !== ui.diff) return false;
+    if (ui.favOnly && !favorites[r.id]) return false;
+    if (q && r.name.toLowerCase().indexOf(q) < 0 && r.area.toLowerCase().indexOf(q) < 0 && r.id.toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  });
+  var col = COLS.filter(function (c) { return c.k === ui.sortKey; })[0];
+  var sv = function (r) { return col && col.s ? col.s(r) : r[ui.sortKey]; };
+  out.sort(function (a, b) { var x = sv(a), y = sv(b); if (x == null) x = -Infinity; if (y == null) y = -Infinity; var c = typeof x === "string" ? x.localeCompare(y) : x - y; return ui.sortAsc ? c : -c; });
+  return out;
+}
+function renderResults() {
+  if (!rows) return;
+  var diffs = {}; rows.forEach(function (r) { diffs[r.difficulty] = 1; });
+  var ds = $("#diffSel"); if (ds.options.length <= 1) Object.keys(diffs).forEach(function (d) { var o = document.createElement("option"); o.value = d; o.textContent = DIFF_KO[d] || d; ds.appendChild(o); });
+  var list = filtered(); $("#count").textContent = list.length + " / " + rows.length + "개";
+  var th = $("#t thead"); th.innerHTML = "<tr>" + COLS.map(function (c) { return "<th class='" + (c.left ? "l " : "") + (c.k === ui.sortKey ? "on" : "") + "' data-k='" + c.k + "'>" + c.l + (c.k === ui.sortKey ? "<span class=arr>" + (ui.sortAsc ? "▲" : "▼") + "</span>" : "") + "</th>"; }).join("") + "</tr>";
+  th.querySelectorAll("th").forEach(function (h) { h.addEventListener("click", function () { var k = h.dataset.k; if (k === "fav") return; if (ui.sortKey === k) ui.sortAsc = !ui.sortAsc; else { ui.sortKey = k; ui.sortAsc = (k === "name" || k === "area" || k === "foodH" || k === "deathsH"); } renderResults(); }); });
+  var tb = $("#t tbody"); tb.innerHTML = "";
+  list.forEach(function (r) {
+    var tr = document.createElement("tr"); tr.className = (r.deathsH > 0 ? "dead" : !r.safe ? "risky" : "") + (r.id === selectedId ? " sel" : "");
+    tr.innerHTML = COLS.map(function (c) {
+      if (c.k === "fav") return "<td class='fav" + (favorites[r.id] ? " on" : "") + "' data-fav>" + (favorites[r.id] ? "★" : "☆") + "</td>";
+      return "<td class='" + (c.left ? "l" : "") + "'" + (c.title ? " title='" + esc(c.title(r)) + "'" : "") + ">" + c.f(r) + "</td>";
+    }).join("");
+    tr.querySelector("[data-fav]").addEventListener("click", function (e) { e.stopPropagation(); favorites[r.id] = !favorites[r.id]; if (!favorites[r.id]) delete favorites[r.id]; LS.set("fav", favorites); renderResults(); });
+    tr.addEventListener("click", function () { selectedId = r.id; renderResults(); renderDetail(r.id); });
+    tb.appendChild(tr);
+  });
+  if (ui.view === "chart") renderChart(list);
+}
+
+// ---------------- chart (XP/h vs food/h) ----------------
+function renderChart(list) {
+  var svg = $("#chart"), W = svg.clientWidth || 800, H = 440, m = { l: 64, r: 20, t: 20, b: 44 };
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H); svg.innerHTML = "";
+  if (!list.length) return;
+  // axis range from the targets you would actually farm (no deaths); dying targets are clamped to the right edge
+  var live = list.filter(function (r) { return r.deathsH === 0; }); if (!live.length) live = list;
+  var xs = live.map(function (r) { return r.foodH; }), ys = list.map(function (r) { return r.combatXpH; });
+  var xmax = Math.max(1, Math.max.apply(null, xs)) * 1.08, ymax = Math.max(1, Math.max.apply(null, ys)) * 1.08;
+  var X = function (v) { return m.l + Math.min(v, xmax) / xmax * (W - m.l - m.r); }, Y = function (v) { return H - m.b - v / ymax * (H - m.t - m.b); };
+  var ns = "http://www.w3.org/2000/svg", el = function (n, a) { var e = document.createElementNS(ns, n); for (var k in a) e.setAttribute(k, a[k]); return e; };
+  function ticks(max, n) { var step = Math.pow(10, Math.floor(Math.log10(max / n))); var m2 = max / n / step; step *= m2 >= 5 ? 5 : m2 >= 2 ? 2 : 1; var out = []; for (var v = 0; v <= max; v += step) out.push(v); return out; }
+  ticks(ymax, 6).forEach(function (v) { svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: "#2c2c2a" })); var t = el("text", { x: m.l - 8, y: Y(v) + 4, "text-anchor": "end", fill: "#898781", "font-size": 11 }); t.textContent = fmt(v, 0); svg.appendChild(t); });
+  ticks(xmax, 8).forEach(function (v) { var t = el("text", { x: X(v), y: H - m.b + 16, "text-anchor": "middle", fill: "#898781", "font-size": 11 }); t.textContent = fmt(v, 0); svg.appendChild(t); });
+  svg.appendChild(el("line", { x1: m.l, x2: W - m.r, y1: Y(0), y2: Y(0), stroke: "#383835" }));
+  var xl = el("text", { x: (m.l + W - m.r) / 2, y: H - 8, "text-anchor": "middle", fill: "#c3c2b7", "font-size": 12 }); xl.textContent = "음식 소모 / 시간 (개)"; svg.appendChild(xl);
+  var yl = el("text", { x: 14, y: (m.t + H - m.b) / 2, "text-anchor": "middle", fill: "#c3c2b7", "font-size": 12, transform: "rotate(-90 14 " + (m.t + H - m.b) / 2 + ")" }); yl.textContent = "전투 XP / 시간"; svg.appendChild(yl);
+  var top = list.slice().sort(function (a, b) { return b.combatXpH - a.combatXpH; }).slice(0, 5).map(function (r) { return r.id; });
+  list.forEach(function (r) {
+    var x = X(r.foodH), y = Y(r.combatXpH), g = el("g", { style: "cursor:pointer" }), col = r.deathsH > 0 ? "#e66767" : r.safe ? "#0ca30c" : "#fab219", sel = r.id === selectedId;
+    var mark = r.deathsH > 0 ? el("path", { d: "M" + (x - 5) + " " + (y - 5) + "L" + (x + 5) + " " + (y + 5) + "M" + (x + 5) + " " + (y - 5) + "L" + (x - 5) + " " + (y + 5), stroke: col, "stroke-width": 2 })
+      : r.safe ? el("circle", { cx: x, cy: y, r: sel ? 7 : 5, fill: col, stroke: "#1e2128", "stroke-width": 2 })
+      : el("path", { d: "M" + x + " " + (y - 6) + "L" + (x + 6) + " " + (y + 5) + "L" + (x - 6) + " " + (y + 5) + "Z", fill: col, stroke: "#1e2128", "stroke-width": 2 });
+    g.appendChild(el("circle", { cx: x, cy: y, r: 12, fill: "transparent" })); g.appendChild(mark);
+    if (top.indexOf(r.id) >= 0 || favorites[r.id] || sel) { var t = el("text", { x: x + 9, y: y - 6, fill: "#f0efec", "font-size": 11 }); t.textContent = r.name; svg.appendChild(t); }
+    g.addEventListener("mousemove", function (ev) { showTip(ev, "<b>" + esc(r.name) + "</b>" + esc(r.area) + "<br>전투 XP/h " + fmt(r.combatXpH, 0) + " · 음식/h " + fmt(r.foodH, 1) + "<br>XP/음식 " + (r.xpPerFood == null ? "∞" : fmt(r.xpPerFood, 0)) + " · 사망/h " + fmt(r.deathsH, 2)); });
+    g.addEventListener("mouseleave", hideTip);
+    g.addEventListener("click", function () { selectedId = r.id; renderResults(); renderDetail(r.id); });
+    svg.appendChild(g);
+  });
+  $("#legend").innerHTML = "<span><svg width=12 height=12><circle cx=6 cy=6 r=5 fill='#0ca30c'/></svg>안전 (한 번의 공격이 임계 HP 이하)</span><span><svg width=12 height=12><path d='M6 0L12 11L0 11Z' fill='#fab219'/></svg>위험 (한 번에 임계 HP 초과 가능)</span><span><svg width=12 height=12><path d='M1 1L11 11M11 1L1 11' stroke='#e66767' stroke-width=2 /></svg>사망 발생</span><span class=faint>왼쪽 위가 좋은 자리입니다 (XP 높고 음식 적음). 상위 5개와 ★는 이름 표시. 사망 대상은 오른쪽 끝에 모아 표시</span>";
+}
+function showTip(ev, html) { var t = $("#tooltip"); t.innerHTML = html; t.classList.remove("hidden"); var x = ev.clientX + 14, y = ev.clientY + 14; if (x + 290 > window.innerWidth) x = ev.clientX - 290; if (y + 90 > window.innerHeight) y = ev.clientY - 90; t.style.left = x + "px"; t.style.top = y + "px"; }
+function hideTip() { $("#tooltip").classList.add("hidden"); }
+
+// ---------------- detail panel ----------------
+function renderDetail(id) {
+  var r = rows && rows.filter(function (x) { return x.id === id; })[0]; var d = $("#detail");
+  if (!r) { d.classList.add("hidden"); return; }
+  d.classList.remove("hidden");
+  var Pr = Engine.buildPlayer(B, lastRunCfg || cfg);
+  var seq = r.seq.map(function (eid) { return B.enemies[eid]; });
+  var enemyHtml = seq.map(function (e, i) {
+    var tri = B.triangle[Pr.style + "|" + e.style];
+    return "<div><span>" + (r.kind === "dungeon" ? (i + 1) + ". " : "") + esc(e.name) + " <span class=faint>CL " + e.cl + " · " + e.style + "</span></span><span class=muted>HP " + e.maxHp + " · 최대타 " + e.maxHit + (e.armour ? " · Armour " + e.armour : "") + (e.maxWard ? " · Ward " + e.maxWard : "") + " · " + (e.interval / 1000).toFixed(1) + "s</span></div>";
+  }).join("");
+  var xpHtml = Object.keys(r.xpH).sort().map(function (k) { return "<div>" + (SKILL_KO[k] || k) + "</div><div>" + fmt(r.xpH[k], 0) + "</div>"; }).join("");
+  var specials = []; seq.forEach(function (e) { e.specials.forEach(function (s) { specials.push(esc(e.name) + ": " + esc(s.atk.name) + " (" + Math.round(s.ch * 100) + "%, " + s.atk.hits.map(function (h) { return h.count + "×" + h.dmg.map(function (x) { return Math.round(x.pct * 100) + "%" + (x.t === "NormalDamage" ? " 랜덤" : x.t === "MaxHit" ? " 최대타" : x.t === "CurrentHitpoints" ? " 현재HP" : " 최대HP"); }).join("+"); }).join(", ") + (s.atk.onhit.length ? ", " + s.atk.onhit.map(function (o) { return o.kind === "dot" ? "DOT " + Math.round(o.ch * 100) + "%" : "기절 " + Math.round(o.ch * 100) + "%"; }).join("/") : "") + ")"); }); });
+  d.innerHTML = "<button class='ghost small close' id='dClose'>✕</button><h2><span class='badge " + r.kind + "'>" + (r.kind === "dungeon" ? "던전" : "적") + "</span>" + esc(r.name) + "</h2>"
+    + "<div class=muted>" + esc(r.area) + " · " + (DIFF_KO[r.difficulty] || r.difficulty) + (r.darkness ? " · 암흑 " + r.darkness + " (내 Light " + Pr.light + ")" : "") + (r.unlock.length ? " · 해금: " + esc(r.unlock.join(", ")) : "") + "</div>"
+    + "<div class='actions'><button class='small' id='dFav'>" + (favorites[id] ? "★ 즐겨찾기 해제" : "☆ 즐겨찾기") + "</button><button class='small' id='dPrecise'>10시간 정밀 시뮬</button></div>"
+    + "<h3>결과 (" + fmt(r.simHours, 1) + "시간 시뮬레이션)</h3><div class=kv>"
+    + "<div>전투 XP / 시간</div><div><b>" + fmt(r.combatXpH, 0) + "</b></div><div>HP XP / 시간</div><div>" + fmt(r.hpXpH, 0) + "</div>"
+    + "<div>킬 / 시간</div><div>" + fmt(r.killsH, 1) + (r.kind === "dungeon" ? " (완주 " + fmt(r.loopsH, 1) + ")" : "") + "</div><div>평균 전투 시간</div><div>" + fmt(r.avgFightS, 1) + "초</div>"
+    + "<div>음식 / 시간</div><div><b>" + fmt(r.foodH, 1) + "</b>개 (" + esc(B.items[Pr.food] ? B.items[Pr.food].n : "") + ")</div><div>XP / 음식 1개</div><div>" + (r.xpPerFood == null ? "∞" : fmt(r.xpPerFood, 0)) + "</div>"
+    + "<div>받은 피해 / 시간</div><div>" + fmt(r.dmgTakenH, 0) + "</div><div>사망 / 시간</div><div class='" + (r.deathsH > 0 ? "crit" : "") + "'>" + fmt(r.deathsH, 2) + "</div></div>"
+    + "<h3>안전</h3><div class=kv><div>적 최대 폭발 피해 (저항 적용)</div><div class='" + (r.safe ? "good" : "warn") + "'>" + r.burst + "</div><div>자동식사 임계 HP</div><div>" + Pr.threshHp + "</div><div>최대 HP</div><div>" + Pr.maxHp + "</div></div>"
+    + "<div class=note>" + (r.safe ? "한 번의 공격 행동으로 임계 HP를 넘기지 못하므로 자동식사만으로 사망하지 않습니다." : "한 번의 공격이 임계 HP를 넘길 수 있어 연속 피격 시 사망할 수 있습니다. 임계 %를 올리거나 HP/Protection을 올리세요.") + "</div>"
+    + "<h3>전투 수치 (" + (r.kind === "dungeon" ? "마지막 적 기준" : "") + ")</h3><div class=kv>"
+    + "<div>내 명중률</div><div>" + pct(r.pHit) + "</div><div>적 명중률</div><div>" + pct(r.eHit) + "</div>"
+    + "<div>내 최대타 (삼각형·원소 적용)</div><div>" + r.pMaxhit + "</div><div>적 저항 (내 공격 감소)</div><div>" + pct(r.eRes) + "</div><div>내 저항 (적 공격 감소)</div><div>" + pct(r.pRes) + "</div></div>"
+    + "<h3>적 (" + seq.length + ")</h3><div class=enemy-seq>" + enemyHtml + "</div>"
+    + (specials.length ? "<h3>특수 공격</h3><div class=note>" + specials.join("<br>") + "</div>" : "")
+    + "<h3>XP 상세 / 시간</h3><div class=kv>" + xpHtml + "</div>"
+    + (r.notes.length ? "<h3>미반영 메커니즘</h3><div>" + r.notes.map(function (n) { return "<span class=tag>" + esc(n) + "</span>"; }).join("") + "</div><div class=note>이 적의 패시브/효과 중 시뮬레이션이 반영하지 않은 것입니다. 실제 결과는 더 나쁠 수 있습니다.</div>" : "");
+  $("#dClose").addEventListener("click", function () { selectedId = null; d.classList.add("hidden"); renderResults(); });
+  $("#dFav").addEventListener("click", function () { favorites[id] = !favorites[id]; if (!favorites[id]) delete favorites[id]; LS.set("fav", favorites); renderResults(); renderDetail(id); });
+  $("#dPrecise").addEventListener("click", function () { runOne(id, 10); });
+}
+
+// ---------------- presets ----------------
+function renderPresets() { var s = $("#presetSel"); var cur = s.value; s.innerHTML = "<option value=''>프리셋 불러오기…</option>"; Object.keys(presets).sort().forEach(function (n) { var o = document.createElement("option"); o.value = n; o.textContent = n; s.appendChild(o); }); s.value = presets[cur] ? cur : ""; }
+$("#presetSave").addEventListener("click", function () { var n = prompt("프리셋 이름", $("#presetSel").value || ""); if (!n) return; presets[n] = JSON.parse(JSON.stringify(cfg)); LS.set("presets", presets); renderPresets(); $("#presetSel").value = n; });
+$("#presetDel").addEventListener("click", function () { var n = $("#presetSel").value; if (!n) return; if (!confirm("프리셋 '" + n + "' 삭제?")) return; delete presets[n]; LS.set("presets", presets); renderPresets(); });
+$("#presetSel").addEventListener("change", function () { var n = $("#presetSel").value; if (n && presets[n]) { cfg = JSON.parse(JSON.stringify(presets[n])); changed(); } });
+$("#resetSave").addEventListener("click", function () { refreshSave(function () { cfg = defaultCfg(); changed(); }); });
+
+// ---------------- save refresh (needs the python server; falls back to the embedded snapshot) ----------------
+function toast(msg, ms) { var t = $("#toast"); t.textContent = msg; t.classList.remove("hidden"); clearTimeout(toast.h); toast.h = setTimeout(function () { t.classList.add("hidden"); }, ms || 6000); }
+var REFRESH_BTNS = "#resetSave, #presetReset2";
+function refreshSave(fallback) {
+  var served = location.protocol === "http:" || location.protocol === "https:";
+  if (!served) { fallback(); toast("파일로 열려 있어 세이브를 다시 읽을 수 없습니다. 내장 스냅샷(" + B.generatedAt + ")으로 되돌렸습니다. python melvor2_sim.py 로 실행하면 이 버튼이 최신 세이브를 읽습니다."); return; }
+  document.querySelectorAll(REFRESH_BTNS).forEach(function (b) { b.disabled = true; b.dataset.t = b.textContent; b.textContent = "⏳ 세이브 읽는 중…"; });
+  fetch("/api/refresh", { method: "POST" }).then(function (r) { return r.json(); }).then(function (j) {
+    if (!j || !j.ok) throw new Error(j && j.error || "서버 오류");
+    // drop the save-derived parts of the stored configs so the reloaded page starts from the new snapshot (presets / sourcing overrides are kept)
+    LS.set("cfg", null);
+    var pc = LS.get("pcfg", null); LS.set("pcfg", pc ? { src: pc.src || {}, onlyOk: pc.onlyOk } : null);
+    toast("세이브 갱신 완료: " + j.saveFile + " (" + j.generatedAt + ") — 다시 불러옵니다.", 3000);
+    location.reload();
+  }).catch(function (e) {
+    document.querySelectorAll(REFRESH_BTNS).forEach(function (b) { b.disabled = false; b.textContent = b.dataset.t || "↺ 세이브 갱신"; });
+    fallback();
+    toast("세이브를 다시 읽지 못했습니다 (" + (e && e.message || e) + "). 내장 스냅샷(" + B.generatedAt + ")으로 되돌렸습니다. python melvor2_sim.py 가 실행 중인지 확인하세요.");
+  });
+}
+// mark the buttons when the save on disk is newer than the embedded snapshot
+(function () {
+  if (location.protocol !== "http:" && location.protocol !== "https:") return;
+  function check() {
+    fetch("/api/status").then(function (r) { return r.json(); }).then(function (j) {
+      document.querySelectorAll(REFRESH_BTNS).forEach(function (b) { b.classList.toggle("stale", !!j.stale); if (j.stale) b.title = "디스크의 세이브(" + new Date(j.saveMtime * 1000).toLocaleTimeString() + ")가 스냅샷보다 새롭습니다 — 눌러서 갱신"; });
+    }).catch(function () {});
+  }
+  check(); setInterval(check, 20000);
+})();
+
+// ---------------- wiring ----------------
+$("#run").addEventListener("click", runAll); $("#rerun").addEventListener("click", runAll);
+document.addEventListener("keydown", function (e) { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") runAll(); });
+$("#ownedOnly").addEventListener("change", renderSlots);
+$("#extraLight").addEventListener("change", function (e) { cfg.extraLight = Math.max(0, +e.target.value || 0); changed(); });
+$("#astroOn").addEventListener("change", function (e) { cfg.astro = e.target.checked; changed(); });
+$("#aeT").addEventListener("change", function (e) { cfg.aeThreshold = Math.max(1, Math.min(99, +e.target.value || 25)) / 100; changed(); });
+$("#aeE").addEventListener("change", function (e) { cfg.aeEff = Math.max(50, Math.min(300, +e.target.value || 100)) / 100; changed(); });
+$("#q").addEventListener("input", function (e) { ui.q = e.target.value; renderResults(); });
+["kindSeg", "safeSeg", "viewSeg"].forEach(function (id) {
+  $("#" + id).querySelectorAll("button").forEach(function (b) { b.addEventListener("click", function () {
+    $("#" + id).querySelectorAll("button").forEach(function (x) { x.classList.remove("on"); }); b.classList.add("on");
+    var v = b.dataset.v; if (id === "kindSeg") ui.kind = v; else if (id === "safeSeg") ui.safe = v; else { ui.view = v; $("#tableWrap").classList.toggle("hidden", v !== "table"); $("#chartWrap").classList.toggle("hidden", v !== "chart"); }
+    renderResults();
+  }); });
+});
+$("#diffSel").addEventListener("change", function (e) { ui.diff = e.target.value; renderResults(); });
+$("#favOnly").addEventListener("change", function (e) { ui.favOnly = e.target.checked; renderResults(); });
+$("#baseline").addEventListener("click", function () {
+  if (baseline) { baseline = null; $("#baseline").textContent = "기준으로 고정"; }
+  else if (rows) { baseline = {}; rows.forEach(function (r) { baseline[r.id] = r; }); $("#baseline").textContent = "기준 해제 (" + (B.items[cfg.food] ? B.stances[P.stance].name : "") + ")"; }
+  renderResults();
+});
+window.addEventListener("resize", function () { if (ui.view === "chart" && rows) renderChart(filtered()); });
+$("#saveInfo").textContent = B.player.name + " · " + B.saveFile + " · 세이브 스냅샷 " + B.generatedAt + " · 적 " + Object.keys(B.enemies).length + "종 / 대상 " + B.targets.length + "개";
+
+renderSide(); renderStats(); renderPresets();
+window.M2 = { B: B, LS: LS, esc: esc, cfg: function () { return cfg; }, refreshSave: refreshSave, toast: toast, astroSync: changed };  // shared with the profit tab script
+})();
+</script>
+<script id="profit">/*__PROFIT_JS__*/</script>
+</body>
+</html>
