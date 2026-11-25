@@ -1218,7 +1218,7 @@ def write_app(gd, save, save_path):
 
 # ----------------------------------------------------------------------------
 # Self-update (GitHub Releases)
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 UPDATE_REPO = "tgYun783/melvor2-simulator"
 RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
 EXE_NAME = "Melvor2Simulator.exe"
@@ -1241,10 +1241,10 @@ def check_update(timeout=4):
                 canApply=bool(FROZEN and asset and _writable(HERE)), frozen=FROZEN)
 
 def apply_update(info):
-    """Download the release zip, swap the running exe for the new one and restart.
-    Windows allows renaming (not overwriting) a running exe: exe -> exe.old, new -> exe, then a detached cmd script
-    waits for this process and the PyInstaller bootloader to exit and starts the new exe with the same arguments.
-    The .old file and the update folder are removed by cleanup_update() on the next start."""
+    """Download the release zip and swap the running exe for the new one.
+    Windows allows renaming (not overwriting) a running exe: exe -> exe.old, new -> exe. The caller then closes the
+    server socket, starts the new exe (relaunch) and exits. The .old file and the update folder are removed by
+    cleanup_update() on the next start."""
     import urllib.request, zipfile, subprocess
     if not FROZEN: raise RuntimeError("소스로 실행 중입니다. git pull 하거나 Release 에서 받으세요: " + info.get("url", RELEASES_URL))
     if not _writable(HERE): raise RuntimeError(f"{HERE} 에 쓰기 권한이 없습니다. Release 에서 zip 을 받아 직접 교체하세요: " + info.get("url", RELEASES_URL))
@@ -1270,17 +1270,37 @@ def apply_update(info):
         shutil.move(new, exe)
     except Exception:
         os.rename(old, exe); raise
-    pids = sorted({os.getpid(), os.getppid()})
-    lines = ["@echo off", 'cd /d "' + HERE + '"']
-    for p in pids:
-        lines += [f":w{p}", f'tasklist /FI "PID eq {p}" 2>nul | find "{p}" >nul', f"if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto w{p})"]
-    lines += ['start "" "' + exe + '" ' + subprocess.list2cmdline(sys.argv[1:]), "exit"]
-    script = os.path.join(work, "restart.cmd")
-    # newline="" so the CRLFs are written as-is (text mode would turn them into CR CR LF, which breaks cmd labels)
-    with open(script, "w", encoding="mbcs", errors="replace", newline="") as fh: fh.write("\r\n".join(lines) + "\r\n")
-    subprocess.Popen(["cmd", "/c", "start", "/min", "", script], cwd=HERE, close_fds=True,
-                     creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
-    return dict(ok=True, version=info["latest"])
+    return dict(ok=True, version=info["latest"], exe=exe)
+
+def relaunch(exe):
+    """Start the (new) exe in its own console window with the same arguments; the caller exits right after."""
+    import subprocess
+    logp = os.path.join(OUT_DIR, "update", "relaunch.log")
+    def log(msg):
+        try:
+            with open(logp, "a", encoding="utf-8") as fh: fh.write(f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+        except OSError:
+            pass
+    # a frozen (PyInstaller onefile) process carries _PYI_* variables that tell a spawned bootloader it is the
+    # already-unpacked child of this process; the new exe must start clean, so strip them
+    env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI") and k != "_MEIPASS2"}
+    args = [exe] + sys.argv[1:]
+    base = subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
+    # the PyInstaller bootloader keeps this process in a kill-on-close job: a plain child would die with us, so break away
+    try:
+        p = subprocess.Popen(args, cwd=HERE, close_fds=True, env=env, creationflags=base | subprocess.CREATE_BREAKAWAY_FROM_JOB)
+        log(f"breakaway popen ok pid={p.pid} args={args}")
+        return "breakaway"
+    except OSError as e:
+        log(f"breakaway failed: {e!r}")
+    # the job forbids breakaway: let WMI create the process outside of it
+    q = lambda s: s.replace("'", "''")
+    ps = (f"Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{CommandLine='{q(subprocess.list2cmdline(args))}'; "
+          f"CurrentDirectory='{q(HERE)}'}} | ConvertTo-Json -Compress")
+    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], env=env, timeout=60, capture_output=True, text=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+    log(f"wmi rc={r.returncode} out={r.stdout.strip()[:300]} err={r.stderr.strip()[:300]}")
+    return "wmi"
 
 def cleanup_update():
     try:
@@ -1363,8 +1383,26 @@ def serve(gd, save_path, port, open_browser):
                         print(f"[{time.strftime('%H:%M:%S')}] v{info['latest']} 내려받는 중...", flush=True)
                         res = apply_update(info)
                     print(f"[{time.strftime('%H:%M:%S')}] 교체 완료 — 다시 시작합니다.", flush=True)
-                    threading.Timer(1.5, lambda: os._exit(0)).start()
-                    return self._json(res)
+                    def _restart():
+                        # free the port first, then start the new exe with the same arguments, then leave
+                        try:
+                            httpd.shutdown(); httpd.server_close()
+                        except Exception:
+                            pass
+                        try:
+                            print("새 버전 시작:", relaunch(res["exe"]), flush=True)
+                        except Exception as e:
+                            print("새 버전을 자동으로 시작하지 못했습니다. 직접 실행해 주세요:", e, flush=True)
+                            try:
+                                with open(os.path.join(OUT_DIR, "update", "relaunch.log"), "a", encoding="utf-8") as fh: fh.write(f"relaunch error: {e!r}\n")
+                            except OSError:
+                                pass
+                        time.sleep(3)  # give the new process a moment before this one (and its bootloader job) goes away
+                        os._exit(0)
+                    # handler threads are daemon threads and a Timer inherits that; a daemon thread would be killed as soon as
+                    # the main thread leaves serve_forever after httpd.shutdown(), before it gets to relaunch()
+                    t = threading.Timer(1.5, _restart); t.daemon = False; t.start()
+                    return self._json(dict(ok=True, version=res["version"]))
                 except Exception as e:
                     import traceback; traceback.print_exc()
                     return self._json(dict(ok=False, error=str(e)), 500)
