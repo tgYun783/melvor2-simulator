@@ -7,7 +7,7 @@ The exe bundles app_template.html / profit.js / profit.css; a copy of any of tho
 exe overrides the bundled one (handy for tweaking the UI without rebuilding). The exe writes app.html,
 cache/ and results next to itself and finds the game folder by walking up until it sees Melvor2.exe.
 """
-import os, shutil, sys, tempfile
+import io, os, re, shutil, sys, tempfile, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GAME_DIR = os.path.dirname(HERE)
@@ -35,6 +35,13 @@ def main():
     print("PyInstaller", " ".join(args), flush=True)
     pyi.run(args)
     staged = os.path.join(WORK, "dist", NAME + ".exe")
+    # release zip (exe + README.txt, no game data) in Melvor2Sim/dist — this is what goes on the GitHub Release
+    ver = re.search(r'^VERSION = "([^"]+)"', io.open(os.path.join(HERE, "melvor2_sim.py"), encoding="utf-8").read(), re.M).group(1)
+    os.makedirs(os.path.join(HERE, "dist"), exist_ok=True)
+    zpath = os.path.join(HERE, "dist", f"{NAME}-v{ver}.zip")
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(staged, NAME + ".exe"); zf.writestr("README.txt", README)
+    print(f"배포 zip: {zpath}  ({os.path.getsize(zpath) / 1e6:.1f} MB)", flush=True)
     try:
         shutil.copy2(staged, os.path.join(OUT_DIR, NAME + ".exe"))
     except PermissionError:

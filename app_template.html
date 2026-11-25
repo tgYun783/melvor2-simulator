@@ -64,6 +64,9 @@ details.sec>.body{padding:4px 12px 12px}
 .preset-bar select{flex:1;min-width:120px}
 .preset-bar button.stale{border-color:var(--warn);color:var(--warn)}
 .preset-bar button.stale::after{content:" ●";font-size:9px;vertical-align:middle}
+#updBar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 18px;font-size:12px;background:var(--panel);border-bottom:1px solid var(--border2);flex:none}
+#updBar b{color:#9be37d}
+#updBar a{color:inherit;text-decoration:underline;opacity:.8}
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;max-width:640px;background:var(--panel);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-size:12px;box-shadow:0 10px 30px rgba(0,0,0,.6)}
 
 .levels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px}
@@ -166,6 +169,7 @@ td .nm{font-weight:600} td .sub{color:var(--muted);font-size:11px;margin-left:6p
 <style id="profitCss">/*__PROFIT_CSS__*/</style>
 </head>
 <body>
+<div id="updBar" class="hidden"><span id="updText"></span><button id="updBtn">업데이트</button><a id="updLink" target="_blank" rel="noopener">변경 내용</a><button id="updClose" title="이번 실행에서는 숨기기">✕</button></div>
 <header class="top">
   <div><h1>Melvor Idle 2 시뮬레이터 <span class="sub" id="saveInfo"></span></h1></div>
   <div class="tabs"><button data-tab="combat" class="on">⚔ 전투 시뮬</button><button data-tab="profit">💰 수익성</button></div>
@@ -983,6 +987,33 @@ function refreshSave(fallback) {
   check(); setInterval(check, 20000);
 })();
 
+// update check against GitHub Releases (served mode only; one GET, no personal data)
+(function () {
+  if (location.protocol !== "http:" && location.protocol !== "https:") return;
+  try { if (sessionStorage.getItem("m2sim.updHide")) return; } catch (e) {}
+  fetch("/api/update").then(function (r) { return r.json(); }).then(function (j) {
+    if (!j || !j.newer) return;
+    $("#updText").innerHTML = "새 버전 <b>v" + esc(j.latest) + "</b> 이 있습니다 (현재 v" + esc(j.current) + ")" +
+      (j.canApply ? "" : j.frozen ? " · 이 폴더에 쓰기 권한이 없어 자동 교체는 불가 — 변경 내용 링크에서 zip 을 받아 교체하세요" : " · 소스로 실행 중 — git pull 하거나 Release 에서 받으세요");
+    $("#updLink").href = j.url; $("#updBtn").classList.toggle("hidden", !j.canApply); $("#updBar").classList.remove("hidden");
+    $("#updBtn").addEventListener("click", function () {
+      if (!confirm("v" + j.latest + " 을 내려받아 실행 파일을 교체하고 다시 시작합니다. 계속할까요?")) return;
+      $("#updBtn").disabled = true; $("#updBtn").textContent = "⏳ 내려받는 중…";
+      fetch("/api/update/apply", { method: "POST" }).then(function (r) { return r.json(); }).then(function (a) {
+        if (!a || !a.ok) throw new Error(a && a.error || "서버 오류");
+        $("#updText").textContent = "v" + a.version + " 설치 완료 — 다시 시작하는 중입니다. 서버가 올라오면 자동으로 새로 고칩니다."; $("#updBtn").classList.add("hidden");
+        setTimeout(function () {
+          var tries = 0, t = setInterval(function () {
+            tries++; if (tries > 90) clearInterval(t);
+            fetch("/api/update", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (u) { if (u && u.current === a.version) { clearInterval(t); location.reload(); } }).catch(function () {});
+          }, 2000);
+        }, 5000);
+      }).catch(function (e) { $("#updBtn").disabled = false; $("#updBtn").textContent = "업데이트"; toast("업데이트 실패: " + (e && e.message || e)); });
+    });
+    $("#updClose").addEventListener("click", function () { $("#updBar").classList.add("hidden"); try { sessionStorage.setItem("m2sim.updHide", "1"); } catch (e) {} });
+  }).catch(function () {});
+})();
+
 // ---------------- wiring ----------------
 $("#run").addEventListener("click", runAll); $("#rerun").addEventListener("click", runAll);
 document.addEventListener("keydown", function (e) { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") runAll(); });
@@ -1007,7 +1038,7 @@ $("#baseline").addEventListener("click", function () {
   renderResults();
 });
 window.addEventListener("resize", function () { if (ui.view === "chart" && rows) renderChart(filtered()); });
-$("#saveInfo").textContent = B.player.name + " · " + B.saveFile + " · 세이브 스냅샷 " + B.generatedAt + " · 적 " + Object.keys(B.enemies).length + "종 / 대상 " + B.targets.length + "개";
+$("#saveInfo").textContent = "v" + (B.version || "?") + " · " + B.player.name + " · " + B.saveFile + " · 세이브 스냅샷 " + B.generatedAt + " · 적 " + Object.keys(B.enemies).length + "종 / 대상 " + B.targets.length + "개";
 
 renderSide(); renderStats(); renderPresets();
 window.M2 = { B: B, LS: LS, esc: esc, cfg: function () { return cfg; }, refreshSave: refreshSave, toast: toast, astroSync: changed };  // shared with the profit tab script

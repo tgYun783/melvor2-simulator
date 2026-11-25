@@ -24,7 +24,7 @@ Formulas follow the Melvor Idle 2 community wiki (wikily.gg / melvorcalc.com /
 melvor2.com) plus the game's own data file. See the assumptions block in the
 HTML report.
 """
-import argparse, ctypes, glob, json, math, os, random, re, struct, sys, time
+import argparse, ctypes, glob, json, math, os, random, re, shutil, struct, sys, time
 from collections import defaultdict
 
 try:
@@ -784,7 +784,7 @@ def export_bundle(gd, save, save_path):
     player = dict(name=save["name"], levels=levels, equipment={s: list(v) for s, v in save["equipment"].items()},
                   food=list(save["food"]) if save["food"] else None, stanceMap=save["stance_map"], currentHp=save["current_hp"],
                   bank={k: v for k, v in save["bank"].items() if k in items}, bankAll=save["bank"])
-    return dict(generatedAt=time.strftime("%Y-%m-%d %H:%M"), saveFile=os.path.basename(save_path), saveVersion=save["version"],
+    return dict(generatedAt=time.strftime("%Y-%m-%d %H:%M"), version=VERSION, saveFile=os.path.basename(save_path), saveVersion=save["version"],
                 player=player, slots=slots, items=items, stances=stances, styles=styles, weaponTypes=weapon_types, spells=spells,
                 triangle=triangle, elemental=elemental, enemies=enemies, targets=targets, respawnMs=RESPAWN_MS, xpTable=XP_TABLE,
                 profit=export_profit(gd, save))
@@ -1215,12 +1215,97 @@ def write_app(gd, save, save_path):
     open(out, "w", encoding="utf-8").write(html)
     return out, bundle
 
+
+# ----------------------------------------------------------------------------
+# Self-update (GitHub Releases)
+VERSION = "0.2.0"
+UPDATE_REPO = "tgYun783/melvor2-simulator"
+RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
+EXE_NAME = "Melvor2Simulator.exe"
+
+def _ver_tuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", str(v))[:3]) or (0,)
+
+def check_update(timeout=4):
+    """Ask GitHub for the latest release: one plain GET, no personal data. Returns a dict for /api/update."""
+    import urllib.request
+    req = urllib.request.Request(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest",
+                                 headers={"Accept": "application/vnd.github+json", "User-Agent": "Melvor2Simulator/" + VERSION})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        rel = json.load(r)
+    tag = rel.get("tag_name") or ""
+    asset = next((a for a in rel.get("assets", []) if a.get("name", "").lower().endswith(".zip") and "melvor2simulator" in a.get("name", "").lower()), None)
+    return dict(current=VERSION, latest=tag.lstrip("v"), newer=_ver_tuple(tag) > _ver_tuple(VERSION),
+                url=rel.get("html_url") or RELEASES_URL, notes=(rel.get("body") or "")[:4000], published=rel.get("published_at"),
+                asset=dict(name=asset["name"], url=asset["browser_download_url"], size=asset.get("size", 0)) if asset else None,
+                canApply=bool(FROZEN and asset and _writable(HERE)), frozen=FROZEN)
+
+def apply_update(info):
+    """Download the release zip, swap the running exe for the new one and restart.
+    Windows allows renaming (not overwriting) a running exe: exe -> exe.old, new -> exe, then a detached cmd script
+    waits for this process and the PyInstaller bootloader to exit and starts the new exe with the same arguments.
+    The .old file and the update folder are removed by cleanup_update() on the next start."""
+    import urllib.request, zipfile, subprocess
+    if not FROZEN: raise RuntimeError("소스로 실행 중입니다. git pull 하거나 Release 에서 받으세요: " + info.get("url", RELEASES_URL))
+    if not _writable(HERE): raise RuntimeError(f"{HERE} 에 쓰기 권한이 없습니다. Release 에서 zip 을 받아 직접 교체하세요: " + info.get("url", RELEASES_URL))
+    a = info.get("asset")
+    if not a: raise RuntimeError("Release 에 zip 파일이 없습니다.")
+    if not a["url"].startswith(f"https://github.com/{UPDATE_REPO}/releases/download/"): raise RuntimeError("예상치 못한 다운로드 주소입니다: " + a["url"])
+    work = os.path.join(OUT_DIR, "update"); shutil.rmtree(work, ignore_errors=True); os.makedirs(work)
+    zpath = os.path.join(work, a["name"])
+    req = urllib.request.Request(a["url"], headers={"User-Agent": "Melvor2Simulator/" + VERSION})
+    with urllib.request.urlopen(req, timeout=120) as r, open(zpath, "wb") as fh:
+        shutil.copyfileobj(r, fh)
+    if a.get("size") and os.path.getsize(zpath) != a["size"]: raise RuntimeError("내려받은 파일 크기가 Release 정보와 다릅니다.")
+    with zipfile.ZipFile(zpath) as zf:
+        names = zf.namelist()
+        if EXE_NAME not in names: raise RuntimeError("zip 안에 " + EXE_NAME + " 가 없습니다.")
+        zf.extract(EXE_NAME, work)
+        if "README.txt" in names:
+            zf.extract("README.txt", work); shutil.copy2(os.path.join(work, "README.txt"), os.path.join(HERE, "README.txt"))
+    exe = os.path.join(HERE, EXE_NAME); old = exe + ".old"; new = os.path.join(work, EXE_NAME)
+    if os.path.exists(old): os.remove(old)
+    os.rename(exe, old)
+    try:
+        shutil.move(new, exe)
+    except Exception:
+        os.rename(old, exe); raise
+    pids = sorted({os.getpid(), os.getppid()})
+    lines = ["@echo off"]
+    for p in pids:
+        lines += [f":w{p}", f'tasklist /FI "PID eq {p}" 2>nul | find "{p}" >nul', f"if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto w{p})"]
+    lines += ['start "" "' + exe + '" ' + subprocess.list2cmdline(sys.argv[1:]), "exit"]
+    script = os.path.join(work, "restart.cmd")
+    with open(script, "w", encoding="mbcs", errors="replace") as fh: fh.write("\r\n".join(lines) + "\r\n")
+    subprocess.Popen(["cmd", "/c", "start", "/min", "", script], cwd=HERE, close_fds=True,
+                     creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+    return dict(ok=True, version=info["latest"])
+
+def cleanup_update():
+    try:
+        old = os.path.join(HERE, EXE_NAME + ".old")
+        if os.path.exists(old): os.remove(old)
+        shutil.rmtree(os.path.join(OUT_DIR, "update"), ignore_errors=True)
+    except OSError:
+        pass
+
 def serve(gd, save_path, port, open_browser):
     """Serve Melvor2Sim/ over HTTP and expose a tiny API so the app's "세이브 갱신"
     button can re-read the newest save and rebuild app.html without leaving the browser."""
     import http.server, threading, urllib.parse
-    state = dict(save_path=save_path, generated=time.time())
+    state = dict(save_path=save_path, generated=time.time(), update=None)
     lock = threading.Lock()
+
+    def update_info(force=False):
+        if force or state["update"] is None:
+            try:
+                state["update"] = check_update()
+                if state["update"]["newer"]:
+                    print(f"새 버전 v{state['update']['latest']} 이 있습니다 (현재 v{VERSION}). 앱 상단의 업데이트 버튼 또는 {state['update']['url']}", flush=True)
+            except Exception as e:
+                state["update"] = dict(current=VERSION, newer=False, error=str(e), frozen=FROZEN, url=RELEASES_URL)
+        return state["update"]
+    threading.Thread(target=update_info, daemon=True).start()
 
     def rebuild():
         with lock:
@@ -1255,6 +1340,9 @@ def serve(gd, save_path, port, open_browser):
                                            stale=mt > state["generated"] + 1))
                 except Exception as e:
                     return self._json(dict(error=str(e)), 500)
+            if path == "/api/update":
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                return self._json(update_info(force=q.get("force", ["0"])[0] == "1"))
             if path in ("", "/"):
                 self.path = "/app.html"
             return super().do_GET()
@@ -1263,6 +1351,19 @@ def serve(gd, save_path, port, open_browser):
             if path == "/api/refresh":
                 try:
                     return self._json(rebuild())
+                except Exception as e:
+                    import traceback; traceback.print_exc()
+                    return self._json(dict(ok=False, error=str(e)), 500)
+            if path == "/api/update/apply":
+                try:
+                    info = update_info(force=True)
+                    if not info.get("newer"): return self._json(dict(ok=False, error="이미 최신 버전입니다."), 400)
+                    with lock:
+                        print(f"[{time.strftime('%H:%M:%S')}] v{info['latest']} 내려받는 중...", flush=True)
+                        res = apply_update(info)
+                    print(f"[{time.strftime('%H:%M:%S')}] 교체 완료 — 다시 시작합니다.", flush=True)
+                    threading.Timer(1.5, lambda: os._exit(0)).start()
+                    return self._json(res)
                 except Exception as e:
                     import traceback; traceback.print_exc()
                     return self._json(dict(ok=False, error=str(e)), 500)
@@ -1303,6 +1404,8 @@ def main():
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--no-html", action="store_true")
     args = ap.parse_args()
+    print(f"Melvor2Simulator v{VERSION}" + ("" if OUT_DIR == HERE else f"  (출력 폴더: {OUT_DIR})"), flush=True)
+    if FROZEN: cleanup_update()
 
     gd = GameData(extract_game_data())
     save_path = args.save or find_newest_save()
