@@ -1229,7 +1229,7 @@ def write_app(gd, save, save_path):
 
 # ----------------------------------------------------------------------------
 # Self-update (GitHub Releases)
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 UPDATE_REPO = "tgYun783/melvor2-simulator"
 RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
 EXE_NAME = "Melvor2Simulator.exe"

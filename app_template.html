@@ -70,9 +70,10 @@ details.sec>.body{padding:4px 12px 12px}
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;max-width:640px;background:var(--panel);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-size:12px;box-shadow:0 10px 30px rgba(0,0,0,.6)}
 
 .levels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px}
-.levels label{display:flex;align-items:center;justify-content:space-between;color:var(--muted)}
+.levels label{display:flex;align-items:center;justify-content:space-between;gap:6px;color:var(--muted);min-width:0}
+.levels label>span{display:inline-flex;flex-direction:column;align-items:flex-end;flex:none}
 .levels input{width:66px}
-.levels .was{font-size:11px;color:var(--faint);margin-left:4px}
+.levels .was{font-size:10px;color:var(--faint);white-space:nowrap;line-height:1.1;margin-top:2px}
 
 .slots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
 .slot{background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:6px 8px;cursor:pointer;min-height:48px;display:flex;flex-direction:column;gap:2px;position:relative}
