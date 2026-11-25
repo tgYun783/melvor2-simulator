@@ -688,13 +688,22 @@ def export_attack(gd, atk):
             unmodeled.append(f"{atk['DisplayName']}({et})")
     return dict(name=atk["DisplayName"], avoidable=atk["IsAvoidable"], hits=hits, onhit=onhit, unmodeled=sorted(set(unmodeled)))
 
+def _drops(d):
+    """Enemy Drops / Dungeon Rewards -> compact {fixed:[[item,min,max]], tables:[{ch,t:[[item,min,max,w]]}], gp:[min,max]|None}."""
+    d = d or {}
+    gp = [[c.get("MinQuantity", 0), c.get("MaxQuantity", 0)] for c in d.get("FixedCurrencies") or [] if short(c.get("Currency", "")) == "GoldPieces"]
+    return dict(fixed=[[short(x["Item"]), x.get("MinQuantity", 1), x.get("MaxQuantity", 1)] for x in d.get("FixedItems") or []],
+                tables=[dict(ch=t.get("Chance", 1), t=[[short(x["Item"]), x.get("MinQuantity", 1), x.get("MaxQuantity", 1), x.get("Weight", 1)] for x in t.get("Table") or []])
+                        for t in d.get("ItemTables") or []],
+                gp=gp[0] if gp else None)
+
 def export_enemy(gd, en):
     e = Enemy(gd, en)
     specials = [dict(ch=ch, atk=export_attack(gd, atk)) for ch, atk in e.specials]
     return dict(name=e.name, levels=e.levels, stats=e.stats, pow=e.power, prot=e.protection, stance=e.stance, style=e.style,
                 element=e.element, maxHp=e.max_hp, interval=e.interval, armour=e.armour, maxWard=e.max_ward, lifesteal=e.lifesteal,
                 maxHit=e.max_hit, accuracy=e.accuracy, specials=specials, specialTotal=e.special_total, killXp=e.kill_xp_factor,
-                cl=e.combat_level, eotHeal=e.eot_heal_pct,
+                cl=e.combat_level, eotHeal=e.eot_heal_pct, drops=_drops(en.get("Drops")),
                 onhitDots=[dict(ch=ch, interval=d["ProcInterval"], count=d["ProcCount"], pct=d["DamagePerProc"]["Formula"]["Data"]["Percent"], name=d["DisplayName"]) for ch, d in e.onhit_dots],
                 unmodeled=e.unmodeled)
 
@@ -751,7 +760,8 @@ def export_bundle(gd, save, save_path):
     for sp in gd_objects(gd)["MagicSpell"]:
         mhit = sum(s["Value"] for s in sp["Stats"]["Stats"] if short(s["Stat"]) == "SpellMaxHit")
         spells.append(dict(id=sp["Id"], name=sp["DisplayName"], element=short(sp["Element"]) if sp.get("Element") else "Neutral",
-                           maxHit=mhit, book=short(sp["Book"]), req=_req_levels(sp["UnlockRequirements"])))
+                           maxHit=mhit, book=short(sp["Book"]), req=_req_levels(sp["UnlockRequirements"]),
+                           runes=[[short(r["Item"]), r.get("Quantity", 1)] for r in sp.get("RuneCosts") or []]))
     sty = list(gd.styles)
     triangle = {f"{p}|{e}": list(gd.triangle_mods(p, e)) for p in sty for e in sty}
     elements = sorted({short(e["Id"]) for e in gd_objects(gd)["Element"]} | {"Neutral"})
@@ -777,7 +787,8 @@ def export_bundle(gd, save, save_path):
         for g in d["Enemies"]:
             seq += [short(g["Enemies"][0]["Enemy"])] * g["Count"]
         targets.append(dict(kind="dungeon", id=d["Id"], name=d["DisplayName"], area=d["DisplayName"], category="Dungeon",
-                            difficulty=short(d["Difficulty"]), darkness=d["Darkness"], seq=seq, unlock=req_text(d["UnlockRequirements"])))
+                            difficulty=short(d["Difficulty"]), darkness=d["Darkness"], seq=seq, unlock=req_text(d["UnlockRequirements"]),
+                            rewards=_drops(d.get("Rewards"))))
     levels = {k: level_from_xp(v) for k, v in save["xp"].items()}
     for k in ("Attack", "Strength", "Defence", "Ranged", "Magic", "Prayer"): levels.setdefault(k, 1)
     levels.setdefault("Hitpoints", 10)
@@ -1218,7 +1229,7 @@ def write_app(gd, save, save_path):
 
 # ----------------------------------------------------------------------------
 # Self-update (GitHub Releases)
-VERSION = "0.2.2"
+VERSION = "0.3.0"
 UPDATE_REPO = "tgYun783/melvor2-simulator"
 RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
 EXE_NAME = "Melvor2Simulator.exe"

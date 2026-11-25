@@ -346,10 +346,12 @@ var Engine = (function () {
   function occupiedSlots(B, eq) {
     var occ = {}; for (var s in eq) { var it = eq[s] && B.items[eq[s]]; if (it && it.occ) it.occ.forEach(function (o) { occ[o] = s; }); } return occ;
   }
+  function priceOf(B, id) { var pi = B.profit && B.profit.items && B.profit.items[id]; return pi ? (pi.sell || 0) : 0; }
+  function nameOf(B, id) { var pi = B.profit && B.profit.items && B.profit.items[id]; return pi && pi.n ? pi.n : (B.items[id] ? B.items[id].n : id); }
   var ASTRO_SK_KO = { Attack: "공격", Strength: "힘", Defence: "방어", Hitpoints: "체력", Ranged: "원거리", Magic: "마법", Prayer: "기도", Slayer: "슬레이어" };
   function astroBonuses(B, cfg) {
     // cfg.astroSel = node selection shared with the profit tab (pcfg.astro); without it the save's unlocked nodes are used
-    var r = { stats: {}, prot: 0, accPct: {}, xpPct: {}, healPct: 0, foodPres: 0, texts: [], other: [] };
+    var r = { stats: {}, prot: 0, accPct: {}, xpPct: {}, healPct: 0, foodPres: 0, itemDbl: 0, curDbl: 0, ammoPres: 0, runePres: 0, texts: [], other: [] };
     var PB = B.profit; if (cfg.astro === false || !PB || !PB.astro) return r;
     var sel = cfg.astroSel || null;
     PB.astro.forEach(function (c) {
@@ -365,6 +367,10 @@ var Engine = (function () {
           else if (b.t === "Experience" && b.s === "PercentXPGained") { if (ASTRO_SK_KO[b.sk]) r.xpPct[b.sk] = (r.xpPct[b.sk] || 0) + b.v; }
           else if (b.t === "CombatFood" && b.s === "PercentHealing") r.healPct += b.v;
           else if (b.t === "CombatFood" && b.s === "FoodPreservationChance") r.foodPres += b.v;
+          else if (b.t === "CombatLoot" && b.s === "ItemDoublingChance") r.itemDbl += b.v;
+          else if (b.t === "CombatLoot" && b.s === "CurrencyDoublingChance") r.curDbl += b.v;
+          else if (b.t === "AmmoConsumption" && b.s === "AmmoPreservationChance") r.ammoPres += b.v;
+          else if (b.t === "MagicSpell" && b.s === "RunePreservationChance") r.runePres += b.v;
           else r.other.push(c.name + " " + n.name + ": " + b.s);
         });
       });
@@ -376,6 +382,8 @@ var Engine = (function () {
     for (var x in r.xpPct) r.texts.push(ASTRO_SK_KO[x] + " XP " + pc(r.xpPct[x]));
     if (r.healPct) r.texts.push("음식 회복 " + pc(r.healPct));
     if (r.foodPres) r.texts.push("음식 보존 " + pc(r.foodPres));
+    if (r.itemDbl) r.texts.push("드롭 2배 " + pc(r.itemDbl)); if (r.curDbl) r.texts.push("GP 2배 " + pc(r.curDbl));
+    if (r.ammoPres) r.texts.push("탄약 보존 " + pc(r.ammoPres)); if (r.runePres) r.texts.push("룬 보존 " + pc(r.runePres));
     return r;
   }
   function buildPlayer(B, cfg) {
@@ -416,7 +424,12 @@ var Engine = (function () {
     var foodItem = B.items[cfg.food], foodHeal = foodItem && foodItem.food ? foodItem.food : 0;
     if (astro.healPct) foodHeal = Math.floor(foodHeal * (1 + astro.healPct));
     var threshHp = Math.round(maxHp * cfg.aeThreshold), healAmount = Math.max(1, Math.trunc(foodHeal * cfg.aeEff));
+    var ammoId = (wItem && wItem.w && wItem.w.ammo && equipped.Ammo && B.items[equipped.Ammo] && B.items[equipped.Ammo].ammoType === wItem.w.ammo) ? equipped.Ammo : null;
+    var runes = (style === "Magic" && spell && spell.runes) ? spell.runes : [];
+    var econ = { ammoId: ammoId, ammoPrice: ammoId ? priceOf(B, ammoId) : 0, runes: runes, runeCost: runes.reduce(function (s, x) { return s + x[1] * priceOf(B, x[0]); }, 0),
+                 foodPrice: priceOf(B, cfg.food), itemDbl: astro.itemDbl, curDbl: astro.curDbl, ammoPres: astro.ammoPres, runePres: astro.runePres };
     return {
+      econ: econ,
       levels: levels, effLevels: effLevels, stats: stats, pow: pow, prot: prot, light: light, elements: elements, weaponType: weaponType, allowed: allowed,
       stance: stance, style: style, spell: spell, xpRates: st.xp, interval: interval, maxHp: maxHp, maxHitBase: maxHit(B, style, levels, stats),
       accuracy: Math.floor(rating(lvSum(B.styles[style].accLv, levels), stats[st.acc] || 0) * (1 + (astro.accPct[style] || 0) + (astro.accPct.all || 0))), combatLevel: Math.floor(lvSum(B.styles[style].clr, levels)),
@@ -434,11 +447,21 @@ var Engine = (function () {
   }
   function playerResVs(B, P, e) { var base = (e.pow + P.prot) > 0 ? P.prot / (e.pow + P.prot) : 0; return Math.min(0.7, base * B.triangle[P.style + "|" + e.style][1]); }
 
-  function run(B, P, seq, hours, seed, darkness) {
+  function run(B, P, seq, hours, seed, darkness, rewards) {
     var rng = mulberry32(seed), randint = function (n) { return 1 + Math.floor(rng() * n); };
     var T = Math.trunc(hours * 3600 * 1000), RESPAWN = B.respawnMs;
     var dark = Math.max(0, 1 - 0.05 * Math.max(0, darkness - P.light));
-    var res = { kills: 0, deaths: 0, food: 0, healed: 0, dmgTaken: 0, dmgDealt: 0, xp: {}, pAtt: 0, pHit: 0, eAtt: 0, eHit: 0, loops: 0, fightMs: 0 };
+    var res = { kills: 0, deaths: 0, food: 0, healed: 0, dmgTaken: 0, dmgDealt: 0, xp: {}, pAtt: 0, pHit: 0, eAtt: 0, eHit: 0, loops: 0, fightMs: 0, lootGp: 0, dropGp: 0, rewardGp: 0, items: {} };
+    var econ = P.econ || {};
+    // expected value of a drop definition (enemy kill or dungeon completion); doubling chances from astrology applied
+    function addLoot(d, isReward) {
+      if (!d) return;
+      var gp = d.gp ? (d.gp[0] + d.gp[1]) / 2 * (1 + (econ.curDbl || 0)) : 0, itemsGp = 0;
+      function addItem(id, qty) { qty *= 1 + (econ.itemDbl || 0); res.items[id] = (res.items[id] || 0) + qty; itemsGp += qty * priceOf(B, id); }
+      (d.fixed || []).forEach(function (x) { addItem(x[0], (x[1] + x[2]) / 2); });
+      (d.tables || []).forEach(function (tb) { var W = 0; tb.t.forEach(function (x) { W += x[3]; }); if (!W) return; tb.t.forEach(function (x) { addItem(x[0], tb.ch * x[3] / W * (x[1] + x[2]) / 2); }); });
+      if (isReward) res.rewardGp += gp + itemsGp; else { res.dropGp += gp; res.lootGp += itemsGp; }
+    }
     var hp = P.maxHp, t = 0, idx = 0, thresh = P.threshHp, heal = P.healAmount;
     var xpPct = P.xpPct || {}, foodPres = P.foodPres || 0;
     function addXp(m) { for (var k in P.xpRates) res.xp[k] = (res.xp[k] || 0) + P.xpRates[k] * m * (1 + (xpPct[k] || 0)); }
@@ -488,8 +511,8 @@ var Engine = (function () {
           dmg = Math.max(1, dmg);
           var dealt = Math.min(dmg, f.hp); f.hp -= dmg; res.dmgDealt += dealt; addXp(dealt);
           if (f.hp <= 0) {
-            res.kills++; res.fightMs += t - f.start; if (e.killXp) addXp(e.killXp);
-            idx++; if (idx % seq.length === 0) res.loops++;
+            res.kills++; res.fightMs += t - f.start; if (e.killXp) addXp(e.killXp); addLoot(e.drops, false);
+            idx++; if (idx % seq.length === 0) { res.loops++; addLoot(rewards, true); }
             var ts = t + RESPAWN; f = spawn(idx, ts); pNext = ts + P.interval; eNext = ts + f.e.interval; dots = [];
           }
         }
@@ -544,12 +567,16 @@ var Engine = (function () {
     return Object.assign({
       hours: hrs, killsH: res.kills / hrs, deathsH: res.deaths / hrs, foodH: res.food / hrs, healedH: res.healed / hrs, dmgTakenH: res.dmgTaken / hrs,
       loopsH: res.loops / hrs, xpH: xpH, avgFightS: res.kills ? res.fightMs / res.kills / 1000 : null, kills: res.kills, deaths: res.deaths,
-      pAtt: res.pAtt, pHitN: res.pHit, eAtt: res.eAtt, eHitN: res.eHit
+      pAtt: res.pAtt, pHitN: res.pHit, eAtt: res.eAtt, eHitN: res.eHit,
+      attacksH: res.pAtt / hrs, lootGpH: res.lootGp / hrs, dropGpH: res.dropGp / hrs, rewardGpH: res.rewardGp / hrs,
+      ammoCostH: res.pAtt / hrs * (1 - (econ.ammoPres || 0)) * (econ.ammoPrice || 0), runeCostH: res.pAtt / hrs * (1 - (econ.runePres || 0)) * (econ.runeCost || 0),
+      foodCostH: res.food / hrs * (econ.foodPrice || 0),
+      topDrops: Object.keys(res.items).map(function (id) { return { id: id, n: nameOf(B, id), qtyH: res.items[id] / hrs, gpH: res.items[id] / hrs * priceOf(B, id) }; }).sort(function (a, b) { return b.gpH - a.gpH; }).slice(0, 10)
     }, info);
   }
   function runTarget(B, P, tg, hours, seed) {
     var seq = tg.seq.map(function (id) { return B.enemies[id]; });
-    var r = run(B, P, seq, hours, seed, tg.darkness);
+    var r = run(B, P, seq, hours, seed, tg.darkness, tg.rewards);
     var burst = 0, ecl = 0, ehp = 0, emh = 0, styles = {}, notes = {};
     seq.forEach(function (e) {
       burst = Math.max(burst, Math.floor(maxBurst(e) * (1 - playerResVs(B, P, e)))); ecl = Math.max(ecl, e.cl); ehp += e.maxHp; emh = Math.max(emh, e.maxHit);
@@ -559,10 +586,11 @@ var Engine = (function () {
     return Object.assign({
       id: tg.id, kind: tg.kind, name: tg.name, area: tg.area, category: tg.category, difficulty: tg.difficulty, darkness: tg.darkness, unlock: tg.unlock, seq: tg.seq,
       enemyCl: ecl, enemyHp: ehp, enemyStyle: Object.keys(styles).sort().join("/"), enemyMaxhit: emh, burst: burst, safe: burst <= P.threshHp,
-      combatXpH: comb, hpXpH: r.xpH.Hitpoints || 0, xpPerFood: r.foodH > 0 ? comb / r.foodH : null, notes: Object.keys(notes).sort(), simHours: hours
+      combatXpH: comb, hpXpH: r.xpH.Hitpoints || 0, xpPerFood: r.foodH > 0 ? comb / r.foodH : null, notes: Object.keys(notes).sort(), simHours: hours,
+      netGpH: r.lootGpH + r.dropGpH + r.rewardGpH - r.ammoCostH - r.runeCostH - r.foodCostH
     }, r);
   }
-  return { buildPlayer: buildPlayer, run: run, runTarget: runTarget, maxBurst: maxBurst, playerResVs: playerResVs, playerEvasion: playerEvasion, enemyEvasion: enemyEvasion, hitChance: hitChance, COMBAT_SKILLS: COMBAT_SKILLS };
+  return { priceOf: priceOf, nameOf: nameOf, buildPlayer: buildPlayer, run: run, runTarget: runTarget, maxBurst: maxBurst, playerResVs: playerResVs, playerEvasion: playerEvasion, enemyEvasion: enemyEvasion, hitChance: hitChance, COMBAT_SKILLS: COMBAT_SKILLS };
 })();
 </script>
 
@@ -830,12 +858,14 @@ var COLS = [
   { k: "hpXpH", l: "HP XP/h", f: function (r) { return fmt(r.hpXpH, 0); } },
   { k: "foodH", l: "음식/h", f: function (r) { return fmt(r.foodH, 1) + delta(r, "foodH", 1, true); } },
   { k: "xpPerFood", l: "XP/음식", f: function (r) { return r.xpPerFood == null ? "∞" : fmt(r.xpPerFood, 0); }, s: function (r) { return r.xpPerFood == null ? 1e12 : r.xpPerFood; } },
+  { k: "netGpH", l: "창고가치/h", f: function (r) { return gpf(r.netGpH) + delta(r, "netGpH", 0); }, title: function (r) { return "드롭 아이템 " + fmt(r.lootGpH, 0) + " + GP " + fmt(r.dropGpH, 0) + (r.rewardGpH ? " + 던전 보상 " + fmt(r.rewardGpH, 0) : "") + " − 탄약 " + fmt(r.ammoCostH, 0) + " − 룬 " + fmt(r.runeCostH, 0) + " − 음식 " + fmt(r.foodCostH, 0) + " (은행 판매가 기준)"; } },
   { k: "pHit", l: "내 명중", f: function (r) { return pct(r.pHit); } },
   { k: "eHit", l: "적 명중", f: function (r) { return pct(r.eHit); } },
   { k: "burst", l: "적 최대폭발", f: function (r) { return r.burst + "<span class=sub>/ " + (lastRunCfg ? Math.round(Engine.buildPlayer(B, lastRunCfg).threshHp) : "") + "</span>"; }, title: function () { return "한 번의 공격 행동으로 받을 수 있는 최대 피해 / 자동식사 임계 HP"; } },
   { k: "deathsH", l: "사망/h", f: function (r) { return fmt(r.deathsH, 2); } },
   { k: "safe", l: "안전", f: function (r) { return r.deathsH > 0 ? "<span class=safe-ic>✕ 사망</span>" : r.safe ? "<span class='safe-ic good'>● 안전</span>" : "<span class='safe-ic warn'>▲ 위험</span>"; }, s: function (r) { return r.deathsH > 0 ? 0 : r.safe ? 2 : 1; } }
 ];
+function gpf(v) { return "<span class='" + (v < 0 ? "crit" : "good") + "'>" + (v < 0 ? "−" : "+") + fmt(Math.abs(v || 0), 0) + "</span>"; }
 function delta(r, k, dec, lowerBetter) {
   if (!baseline) return ""; var b = baseline[r.id]; if (!b) return "<span class=d>기준 없음</span>";
   var d = r[k] - b[k]; if (Math.abs(d) < Math.pow(10, -dec) / 2) return "<span class=d>=</span>";
@@ -935,6 +965,15 @@ function renderDetail(id) {
     + "<div>킬 / 시간</div><div>" + fmt(r.killsH, 1) + (r.kind === "dungeon" ? " (완주 " + fmt(r.loopsH, 1) + ")" : "") + "</div><div>평균 전투 시간</div><div>" + fmt(r.avgFightS, 1) + "초</div>"
     + "<div>음식 / 시간</div><div><b>" + fmt(r.foodH, 1) + "</b>개 (" + esc(B.items[Pr.food] ? B.items[Pr.food].n : "") + ")</div><div>XP / 음식 1개</div><div>" + (r.xpPerFood == null ? "∞" : fmt(r.xpPerFood, 0)) + "</div>"
     + "<div>받은 피해 / 시간</div><div>" + fmt(r.dmgTakenH, 0) + "</div><div>사망 / 시간</div><div class='" + (r.deathsH > 0 ? "crit" : "") + "'>" + fmt(r.deathsH, 2) + "</div></div>"
+    + "<h3>창고 가치 / 시간 (은행 판매가 기준)</h3><div class=kv>"
+    + "<div>드롭 아이템</div><div>+" + fmt(r.lootGpH, 0) + "</div><div>GP 드롭</div><div>+" + fmt(r.dropGpH, 0) + "</div>"
+    + (r.kind === "dungeon" ? "<div>던전 완주 보상</div><div>+" + fmt(r.rewardGpH, 0) + "</div>" : "")
+    + "<div>탄약 소모</div><div>" + (Pr.econ.ammoId ? "−" + fmt(r.ammoCostH, 0) + " (" + fmt(r.attacksH * (1 - Pr.econ.ammoPres), 0) + "발 " + esc(Engine.nameOf(B, Pr.econ.ammoId)) + " × " + fmt(Pr.econ.ammoPrice, 0) + ")" : "<span class=muted>없음</span>") + "</div>"
+    + "<div>룬 소모</div><div>" + (Pr.econ.runes.length ? "−" + fmt(r.runeCostH, 0) + " (공격당 " + Pr.econ.runes.map(function (x) { return esc(Engine.nameOf(B, x[0])) + " " + x[1]; }).join(", ") + ", " + fmt(r.attacksH, 0) + "회/h)" : "<span class=muted>없음</span>") + "</div>"
+    + "<div>음식 소모</div><div>−" + fmt(r.foodCostH, 0) + " (" + fmt(r.foodH, 1) + "개 × " + fmt(Pr.econ.foodPrice, 0) + ")</div>"
+    + "<div><b>순 증감</b></div><div>" + gpf(r.netGpH) + "</div></div>"
+    + (r.topDrops && r.topDrops.length ? "<div class=note>주요 드롭 (기대값): " + r.topDrops.slice(0, 6).map(function (x) { return esc(x.n) + " " + fmt(x.qtyH, 1) + "/h = " + fmt(x.gpH, 0); }).join(" · ") + "</div>" : "")
+    + "<div class=note>드롭은 테이블 확률·가중치의 기대값입니다. 장비의 드롭/GP 2배·탄약/룬 보존 효과, 상자 개봉 가치, 슬레이어 코인은 미반영입니다.</div>"
     + "<h3>안전</h3><div class=kv><div>적 최대 폭발 피해 (저항 적용)</div><div class='" + (r.safe ? "good" : "warn") + "'>" + r.burst + "</div><div>자동식사 임계 HP</div><div>" + Pr.threshHp + "</div><div>최대 HP</div><div>" + Pr.maxHp + "</div></div>"
     + "<div class=note>" + (r.safe ? "한 번의 공격 행동으로 임계 HP를 넘기지 못하므로 자동식사만으로 사망하지 않습니다." : "한 번의 공격이 임계 HP를 넘길 수 있어 연속 피격 시 사망할 수 있습니다. 임계 %를 올리거나 HP/Protection을 올리세요.") + "</div>"
     + "<h3>전투 수치 (" + (r.kind === "dungeon" ? "마지막 적 기준" : "") + ")</h3><div class=kv>"
