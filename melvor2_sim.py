@@ -1218,7 +1218,7 @@ def write_app(gd, save, save_path):
 
 # ----------------------------------------------------------------------------
 # Self-update (GitHub Releases)
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 UPDATE_REPO = "tgYun783/melvor2-simulator"
 RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
 EXE_NAME = "Melvor2Simulator.exe"
@@ -1271,12 +1271,13 @@ def apply_update(info):
     except Exception:
         os.rename(old, exe); raise
     pids = sorted({os.getpid(), os.getppid()})
-    lines = ["@echo off"]
+    lines = ["@echo off", 'cd /d "' + HERE + '"']
     for p in pids:
         lines += [f":w{p}", f'tasklist /FI "PID eq {p}" 2>nul | find "{p}" >nul', f"if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto w{p})"]
     lines += ['start "" "' + exe + '" ' + subprocess.list2cmdline(sys.argv[1:]), "exit"]
     script = os.path.join(work, "restart.cmd")
-    with open(script, "w", encoding="mbcs", errors="replace") as fh: fh.write("\r\n".join(lines) + "\r\n")
+    # newline="" so the CRLFs are written as-is (text mode would turn them into CR CR LF, which breaks cmd labels)
+    with open(script, "w", encoding="mbcs", errors="replace", newline="") as fh: fh.write("\r\n".join(lines) + "\r\n")
     subprocess.Popen(["cmd", "/c", "start", "/min", "", script], cwd=HERE, close_fds=True,
                      creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
     return dict(ok=True, version=info["latest"])
