@@ -57,6 +57,7 @@ details.skb>.b{padding:2px 10px 10px}
 .pd table{width:100%;border-collapse:collapse;font-size:12px}
 .pd td{padding:3px 4px;border-bottom:1px solid var(--border);vertical-align:top;text-align:left;white-space:normal}
 .pd td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pd td.r:has(+td.src){white-space:normal;overflow-wrap:anywhere}
 .pd select{font-size:12px;padding:2px 4px;max-width:100%}
 .pd .cmp{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
 .pd .cmp span{font-size:11px;background:var(--panel3);border-radius:10px;padding:1px 7px;color:var(--muted);cursor:pointer;border:1px solid transparent}

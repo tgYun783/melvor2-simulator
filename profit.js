@@ -78,12 +78,12 @@
     var distract = {};
     (PB.distract || []).forEach(function (L) { distract[L.loc] = {}; L.items.forEach(function (d) { distract[L.loc][d.id] = d.met === true; }); });
     return { levels: lv, tb: tb, pets: pets, shop: shop, rank: rank, bonfire: { id: PB.save.bonfire ? PB.save.bonfire.id : null, active: !!(PB.save.bonfire && PB.save.bonfire.active) },
-      astro: astro, distract: distract, farm: { water: true, compost: null }, ranch: { fed: true, treats: true, pets: true, count: 1 }, src: {}, onlyOk: true };
+      astro: astro, distract: distract, farm: { water: true, compost: null }, ranch: { fed: true, treats: true, pets: true, count: 1 }, anvil: {}, src: {}, onlyOk: true };
   }
   var pcfg = LS.get("pcfg", null) || defaultPcfg();
   // keep shape in sync with the data (new slots / purchases)
   (function () { var d = defaultPcfg(); ["levels", "pets", "shop", "rank"].forEach(function (k) { pcfg[k] = Object.assign({}, d[k], pcfg[k] || {}); }); pcfg.tb = pcfg.tb || {}; SKILLS.forEach(function (s) { pcfg.tb[s.id] = Object.assign({}, d.tb[s.id], pcfg.tb[s.id] || {}); }); pcfg.src = pcfg.src || {}; pcfg.bonfire = pcfg.bonfire || d.bonfire; if (pcfg.onlyOk == null) pcfg.onlyOk = true;
-    pcfg.farm = Object.assign({}, d.farm, pcfg.farm || {}); pcfg.ranch = Object.assign({}, d.ranch, pcfg.ranch || {});
+    pcfg.farm = Object.assign({}, d.farm, pcfg.farm || {}); pcfg.ranch = Object.assign({}, d.ranch, pcfg.ranch || {}); pcfg.anvil = pcfg.anvil || {};
     pcfg.distract = pcfg.distract || {}; Object.keys(d.distract).forEach(function (k) { pcfg.distract[k] = Object.assign({}, d.distract[k], pcfg.distract[k] || {}); });
     pcfg.astro = pcfg.astro || {}; Object.keys(d.astro).forEach(function (k) { var o = pcfg.astro[k] || {}; pcfg.astro[k] = { minor: Object.assign({}, d.astro[k].minor, o.minor || {}), major: Object.assign({}, d.astro[k].major, o.major || {}) }; }); })();
   var P0 = defaultPcfg();
@@ -180,6 +180,27 @@
     table.forEach(function (d) { var q = Math.floor((d.min + d.max) / 2 * (1 + fortune / 100)); addq(out, d.item, (d.w || 1) / W * q * (1 + dbl)); });
     return out;
   }
+
+  /* alternative reward modes (Sacrificial Anvil) */
+  function anvilUnlocked(m) {
+    if (!m.node) return true;
+    return (PB.astro || []).some(function (c) { return c.major.some(function (n) { return n.id === m.node; }) && pcfg.astro[c.id] && pcfg.astro[c.id].major[m.node]; });
+  }
+  function anvilCfg(m) { return pcfg.anvil[m.id] || { on: false, smelt: false }; }
+  function anvilFor(r) {
+    if (r.kind !== "art") return null;
+    for (var i = 0; i < (PB.anvil || []).length; i++) {
+      var m = PB.anvil[i], a = anvilCfg(m);
+      if (m.sk !== r.sk || !a.on || !anvilUnlocked(m)) continue;
+      if (m.allow && m.allow.indexOf(r.cat) < 0) continue;
+      if ((m.deny || []).indexOf(r.cat) >= 0) continue;
+      if (r.cat === "Smelting" && !a.smelt) continue;
+      return m;
+    }
+    return null;
+  }
+  function oneIn(v) { return v > 0 ? "1/" + pfmt(Math.round(1 / v)) : "0"; }
+  function anvilEV(m) { var W = m.xpW + m.saleW + m.colW; return { xp: 1 + (m.xpMult - 1) * m.xpW / W, sale: 1 + (m.saleMult - 1) * m.saleW / W, col: m.colW / W }; }
 
   function compute(r, lv) {
     var res = R0(), sk = r.sk, ctx = { sk: sk, cat: r.cat, sub: r.sub, rec: r.gid, loc: r.kind === "fish" ? r.cat : undefined, rt: r.rt };
@@ -330,6 +351,18 @@
       ingredients(res, r, T, ctx, 1 - pres3);
       craftedProducts(res, r, T, ctx, dbl6, 1, "each");
       res.xp = xpOf(res, sk, r.xp);
+      var am = anvilFor(r);
+      if (am) { // products -> GP at sell price (×sale mult), XP ×mult, collectable roll per base Step
+        var ev = anvilEV(am), gpA = 0;
+        Object.keys(res.outs).forEach(function (k) { gpA += res.outs[k] * sell(k); }); res.outs = {};
+        res.gp += gpA * ev.sale; res.xp *= ev.xp;
+        var cw = 0; am.collect.forEach(function (c) { cw += c.w || 1; });
+        am.collect.forEach(function (c) { addq(res.outs, c.item, (r.steps || 1) * ev.col * (c.w || 1) / cw * (c.min + c.max) / 2); });
+        res.info.anvil = { name: am.name, sale: ev.sale, xp: ev.xp, col: (r.steps || 1) * ev.col };
+        res.lines.push({ k: am.name + " · 제품 → GP", v: "판매가 ×" + pfmt(ev.sale, 3), src: [] });
+        res.lines.push({ k: am.name + " · XP", v: "×" + pfmt(ev.xp, 3), src: [] });
+        res.lines.push({ k: am.name + " · 수집품", v: oneIn((r.steps || 1) * ev.col) + " 완성", src: [] });
+      }
     } else if (r.kind === "herb") {
       T = "HerbloreAction";
       var ivP = interval(res, T, r.ivP, ctx, "FlatPreparingInterval", "PercentPreparingInterval", "mul-first"), ivH = interval(res, T, r.ivH, ctx, "FlatHeatingInterval", "PercentHeatingInterval", "mul-first");
@@ -402,7 +435,7 @@
     ROWS = RECIPES.map(function (r) {
       var R = RATES[r.id], ch = chain(r.id, 1, 0, []), outV = Math.max(0, R.gpH); Object.keys(R.outs).forEach(function (k) { outV += R.outs[k] * sell(k); });
       var inV = Math.max(0, -R.gpH); ch.parts.forEach(function (p) { inV += p.cost; });
-      var main = Object.keys(R.outs).sort(function (a, b) { return R.outs[b] * sell(b) - R.outs[a] * sell(a); })[0];
+      var main = Object.keys(R.outs).filter(function (k) { return R.outs[k] >= 0.01; }).sort(function (a, b) { return R.outs[b] * sell(b) - R.outs[a] * sell(a); })[0];
       return { id: r.id, r: r, R: R, ok: R.ok, perH: R.perH, outV: outV, inV: inV, net: ch.value, time: ch.time, netH: ch.time > 0 ? ch.value / ch.time : 0, xpH: R.xpH, main: main, chain: ch };
     });
   }
@@ -503,6 +536,17 @@
           if (d.req.length) sp7.title = "요구: " + d.req.join(", "); l.appendChild(sp7); body.appendChild(l);
         });
       });
+      (PB.anvil || []).filter(function (m) { return m.sk === s.id; }).forEach(function (m) {
+        var a = pcfg.anvil[m.id] = pcfg.anvil[m.id] || { on: false, smelt: false }, ok = anvilUnlocked(m), ev = anvilEV(m);
+        var h8 = document.createElement("div"); h8.className = "sub-h"; h8.textContent = m.name; h8.title = "게임에서는 레시피별 토글. 제품을 창고 대신 판매가 GP로 받고, " + pc(m.xpW / (m.xpW + m.saleW + m.colW)) + "로 XP ×" + m.xpMult + ", " + pc(m.saleW / (m.xpW + m.saleW + m.colW)) + "로 GP ×" + m.saleMult + ", 단계마다 " + oneIn(m.colW / (m.xpW + m.saleW + m.colW)) + "로 수집품"; body.appendChild(h8);
+        var l1 = document.createElement("label"); l1.className = "shopup"; var c1 = document.createElement("input"); c1.type = "checkbox"; c1.checked = !!a.on; c1.disabled = !ok; if (a.on && ok) active++;
+        c1.addEventListener("change", function () { a.on = c1.checked; pchanged(); }); l1.appendChild(c1);
+        var s1 = document.createElement("span"); s1.innerHTML = "사용 (장비 제작)" + (ok ? "" : " <span class=muted title='요구: " + esc(m.req.join(", ")) + "'>🔒</span>") + "<span class=bt>제품을 GP로 희생: 기대 판매가 ×" + pfmt(ev.sale, 3) + ", XP ×" + pfmt(ev.xp, 3) + ", 수집품 " + oneIn(ev.col) + " 단계</span>"; l1.appendChild(s1); body.appendChild(l1);
+        var l2 = document.createElement("label"); l2.className = "shopup"; var c2 = document.createElement("input"); c2.type = "checkbox"; c2.checked = !!a.smelt; c2.disabled = !ok || !a.on;
+        c2.addEventListener("change", function () { a.smelt = c2.checked; pchanged(); }); l2.appendChild(c2);
+        var s2 = document.createElement("span"); s2.innerHTML = "제련(바)에도 적용<span class=bt>켜면 바도 GP가 되어 다른 레시피의 '직접 생산' 재료로 쓸 수 없음</span>"; l2.appendChild(s2); body.appendChild(l2);
+        if (!ok) { var n8 = document.createElement("div"); n8.className = "note"; n8.textContent = "요구: " + m.req.join(", ") + " — 위 점성술 섹션에서 해당 대노드를 체크하면 사용할 수 있습니다."; body.appendChild(n8); }
+      });
       if (s.id === "Firemaking") {
         var h4 = document.createElement("div"); h4.className = "sub-h"; h4.textContent = "화톳불"; body.appendChild(h4);
         var br = document.createElement("div"); br.className = "tbslot"; var bsel = document.createElement("select");
@@ -545,7 +589,7 @@
   function owned(id) { if ((B.player.bankAll || {})[id] > 0) return true; var tb = PB.save.toolbelt || {}; for (var s in tb) for (var sl in tb[s]) if (tb[s][sl][0] === id) return true; return false; }
 
   var PCOLS = [
-    { k: "name", l: "활동", left: true, f: function (x) { return "<b>" + esc(x.r.name) + "</b>" + (x.r.catName ? "<span class=it> · " + esc(x.r.catName) + "</span>" : "") + (x.r.reqOther ? "<span class=it> · " + esc(x.r.reqOther.join(", ")) + "</span>" : ""); } },
+    { k: "name", l: "활동", left: true, f: function (x) { return "<b>" + esc(x.r.name) + "</b>" + (x.R.c.info && x.R.c.info.anvil ? " <span class=it title='" + esc(x.R.c.info.anvil.name) + "'>⚒</span>" : "") + (x.r.catName ? "<span class=it> · " + esc(x.r.catName) + "</span>" : "") + (x.r.reqOther ? "<span class=it> · " + esc(x.r.reqOther.join(", ")) + "</span>" : ""); } },
     { k: "sk", l: "스킬", left: true, f: function (x) { return SK[x.r.sk].name; } },
     { k: "lvl", l: "Lv", f: function (x) { return x.r.lvl; } },
     { k: "perH", l: "행동/h", f: function (x) { return pfmt(x.perH, x.perH < 1 ? 2 : x.perH < 10 ? 1 : 0); }, tip: "완성(벌목/채굴/제작/병입 10회/소매치기/농사 심기~수확 1주기/동물 1마리 1시간) 횟수 / 시간" },
@@ -563,7 +607,7 @@
     var list = ROWS.filter(function (x) {
       if (pcfg.onlyOk && !x.ok) return false;
       if (pui.skill && x.r.sk !== pui.skill) return false;
-      if (q) { var hay = (x.r.name + " " + SK[x.r.sk].name + " " + (x.r.catName || "") + " " + Object.keys(x.R.outs).map(iname).join(" ") + " " + Object.keys(x.R.ins).map(iname).join(" ")).toLowerCase(); if (hay.indexOf(q) < 0) return false; }
+      if (q) { var hay = (x.r.name + " " + SK[x.r.sk].name + " " + (x.r.catName || "") + " " + Object.keys(x.R.outs).filter(function (k) { return x.R.outs[k] >= 0.005; }).map(iname).join(" ") + " " + Object.keys(x.R.ins).map(iname).join(" ")).toLowerCase(); if (hay.indexOf(q) < 0) return false; }
       return true;
     });
     list.sort(function (a, b) { var va = sortVal(a, pui.sortKey), vb = sortVal(b, pui.sortKey); var c = typeof va === "string" ? va.localeCompare(vb) : (va - vb); return pui.sortAsc ? c : -c; });
@@ -622,6 +666,7 @@
       if (c.info.success != null) kv.push(["성공률", pc(c.info.success) + (c.info.prof != null ? " (숙련 " + c.info.prof + " / 난이도 " + c.info.diff + ")" : c.info.stealth != null ? " (은신 " + c.info.stealth + " / 감지 " + c.info.perc + ")" : "")]);
       if (c.info.hits != null) kv.push(["타격/완성", pfmt(c.info.hits, 2) + " × " + c.info.iv + "ms" + (c.info.hp ? " (체력 " + c.info.hp + ")" : c.info.p != null ? " (성공 " + pc(c.info.p) + ")" : "")]);
       if (c.info.actions != null) kv.push(["행동/완성", pfmt(c.info.actions, 2) + " × " + c.info.iv + "ms (" + c.info.steps + "단계)"]);
+      if (c.info.anvil) kv.push([c.info.anvil.name, "제품 → GP ×" + pfmt(c.info.anvil.sale, 3) + " · XP ×" + pfmt(c.info.anvil.xp, 3) + " · 수집품 " + oneIn(c.info.anvil.col) + " 완성"]);
       if (c.info.ivMin != null) kv.push(["간격", c.info.ivMin / 1000 + "–" + c.info.ivMax / 1000 + "s, 물고기 " + pc(c.info.fish)]);
       if (c.info.bottles) kv.push(["배치", (c.info.ivP + c.info.ivH + c.info.ivS) / 1000 + "s + 병입 " + c.info.bottles + "×" + c.info.ivB / 1000 + "s"]);
       if (c.info.stunIv != null) kv.push(["실패 시", "기절 " + c.info.stunIv / 1000 + "s, HP 손실 " + pfmt(R.hpH) + "/h"]);
@@ -642,8 +687,10 @@
     h += "<div class=kv>" + kv.map(function (p) { return "<div><div class=k>" + p[0] + "</div><div class=v>" + p[1] + "</div></div>"; }).join("") + "</div>";
     // outputs
     h += "<h3>산출 (시간당)</h3><table>";
-    Object.keys(R.outs).sort(function (a, b) { return R.outs[b] * sell(b) - R.outs[a] * sell(a); }).forEach(function (k) { h += "<tr><td>" + esc(iname(k)) + "</td><td class=r>" + pfmt(R.outs[k], R.outs[k] < 10 ? 2 : 1) + "</td><td class=r>× " + pfmt(sell(k)) + "</td><td class=r>" + gp(R.outs[k] * sell(k)) + "</td></tr>"; });
-    if (R.gpH) h += "<tr><td>" + (R.gpH < 0 ? "GP (구매비를 수명으로 분할)" : "GP (직접 획득)") + "</td><td></td><td></td><td class=r>" + gp(R.gpH) + "</td></tr>";
+    var trace = Object.keys(R.outs).filter(function (k) { return R.outs[k] < 0.005; }), traceV = 0; trace.forEach(function (k) { traceV += R.outs[k] * sell(k); });
+    Object.keys(R.outs).filter(function (k) { return R.outs[k] >= 0.005; }).sort(function (a, b) { return R.outs[b] * sell(b) - R.outs[a] * sell(a); }).forEach(function (k) { h += "<tr><td>" + esc(iname(k)) + "</td><td class=r>" + pfmt(R.outs[k], R.outs[k] < 10 ? 2 : 1) + "</td><td class=r>× " + pfmt(sell(k)) + "</td><td class=r>" + gp(R.outs[k] * sell(k)) + "</td></tr>"; });
+    if (trace.length) h += "<tr><td title='" + esc(trace.map(function (k) { return iname(k) + " " + (R.outs[k] * 1e6).toFixed(1) + "/백만h"; }).join(", ")) + "'>희귀 산출 " + trace.length + "종 (기대값)</td><td class=r>&lt;0.01</td><td></td><td class=r>" + gp(traceV) + "</td></tr>";
+    if (R.gpH) h += "<tr><td>" + (R.gpH < 0 ? "GP (구매비를 수명으로 분할)" : c.info && c.info.anvil ? "GP (" + esc(c.info.anvil.name) + ": 제품 판매가 ×" + pfmt(c.info.anvil.sale, 3) + ")" : "GP (직접 획득)") + "</td><td></td><td></td><td class=r>" + gp(R.gpH) + "</td></tr>";
     h += "</table>";
     // inputs with sourcing
     var ins = Object.keys(R.ins);

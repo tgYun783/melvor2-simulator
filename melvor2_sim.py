@@ -930,6 +930,7 @@ def _req_text(reqs):
         elif t == "ItemStatistic": out.append(f"{short(d.get('Statistic'))} {short(d.get('Item'))} ×{d.get('Value')}")
         elif t == "HuntingAnimalStatistic": out.append(f"{short(d.get('Statistic'))} {short(d.get('Animal'))} ×{d.get('Value')}")
         elif t == "AgilityTechniqueLevel": out.append(f"Agility 기술 {short(d.get('Technique'))} Lv {d.get('Level', '?')}")
+        elif t == "AstrologyMajorNodeUnlocked": out.append(f"점성술 {short(d.get('MajorNode'))}")
         else: out.append(t)
     return out
 
@@ -1180,7 +1181,7 @@ def export_profit(gd, save):
     def _anode(nid, kind):
         n = nodes_by[short(nid)]
         return dict(id=n["Id"], name=n["DisplayName"], kind=kind, bon=_bon_list(n["Bonuses"]), cbon=_bon_list(n["Bonuses"], COMBAT_STAT_TYPES),
-                    txt=[re.sub(r"\s+", " ", t) for t in _bonus_texts(n["Bonuses"])], desc=n.get("Description") or "")
+                    txt=[re.sub(r"\s+", " ", t) for t in _bonus_texts(n["Bonuses"])], desc=re.sub(r"\[.*?\]", "", n.get("Description") or ""))
     astro = [dict(id=c["Id"], name=c["DisplayName"], skills=[short(e) for e in c["Entities"]], perMajor=c["MinorNodesPerMajorNode"],
                   minor=[_anode(x, "minor") for x in c["MinorNodes"]], major=[_anode(x, "major") for x in c["MajorNodes"]],
                   req=_req_text(c.get("Requirements")) + _req_text(c.get("SecondaryRequirements")))
@@ -1213,8 +1214,23 @@ def export_profit(gd, save):
     bank_value = sum(q * items[k]["sell"] for k, q in save["bank"].items() if k in items)
     psave = dict(toolbelt=tb, pets=save["pets"], shop=save["shop"], bonfire=save["bonfire"], gp=save["gp"], bankValue=bank_value,
                  astro=save.get("astro") or {})
+    # alternative reward modes (Sacrificial Anvil): per-recipe toggle in the game; the sim offers it per skill/category.
+    # Per completion: one roll decides xp×mult / sale×mult (weights), every Step rolls the collectable weight;
+    # products are converted to their SellsFor GP (×sale mult) instead of entering the bank.
+    anvil = []
+    mode_skill = {}
+    for ent, cfg in EC.items():
+        for m in (cfg.get("RewardModes") or []) if isinstance(cfg, dict) else []:
+            mode_skill[short(m["Id"] if isinstance(m, dict) else m)] = short(ent)
+    for m in O.get("SacrificialAnvilRewardMode", []):
+        node = next((short(q["Data"]["MajorNode"]) for q in (m.get("UnlockRequirements") or []) if short(q["Type"]) == "AstrologyMajorNodeUnlocked"), None)
+        anvil.append(dict(id=m["Id"], name=m["DisplayName"], sk=mode_skill.get(m["Id"], "Smithing"), xpW=m["BonusXpWeight"], xpMult=m["BonusXpMultiplier"],
+                          saleW=m["BonusSaleValueWeight"], saleMult=m["BonusSaleValueMultiplier"], colW=m["CollectableWeight"],
+                          collect=[dict(item=short(c["Item"]), min=c["MinQuantity"], max=c["MaxQuantity"], w=c.get("Weight", 1)) for c in m.get("Collectables") or []],
+                          allow=[short(c) for c in m["AllowedCategories"]] if m.get("AllowedCategories") else None,
+                          deny=[short(c) for c in m.get("DisallowedCategories") or []], req=_req_text(m.get("UnlockRequirements")), node=node))
     return dict(skills=skills, recipes=recs, items=items, shop=shop, bonfires=bonfires, mining=mining, herbBottles=10, farming=farming,
-                astro=astro, distract=distract, save=psave)
+                astro=astro, distract=distract, anvil=anvil, save=psave)
 
 def gd_objects(gd):
     return gd.raw["Objects"]
@@ -1233,7 +1249,7 @@ def write_app(gd, save, save_path):
 
 # ----------------------------------------------------------------------------
 # Self-update (GitHub Releases)
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 UPDATE_REPO = "tgYun783/melvor2-simulator"
 RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
 EXE_NAME = "Melvor2Simulator.exe"
