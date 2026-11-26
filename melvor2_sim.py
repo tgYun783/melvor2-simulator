@@ -995,8 +995,12 @@ def export_profit(gd, save):
     O = gd_objects(gd); EC = gd.raw["EntityConfig"]
     levels = {k: level_from_xp(v) for k, v in save["xp"].items()}
     # --- items (all) with sell / shop buy price / toolbelt / equipment skilling bonuses
+    # only purchases registered in the Shop entity config are actually sold; the data also defines
+    # orphans (GrainStarterPack, Cowhide, tree seeds, old tools...) that never appear in the game
+    _reg = {short(x["Id"] if isinstance(x, dict) else x) for x in ((EC.get("MelvorBase:Shop") or {}).get("Purchases") or [])}
+    shop_purchases = [s for s in O["ShopPurchase"] if not _reg or s["Id"] in _reg]
     buy = {}
-    for s in O["ShopPurchase"]:
+    for s in shop_purchases:
         p = s["Provides"]["Items"]; c = s["Costs"]
         if len(p) == 1 and not c["Items"] and len(c["Currencies"]) == 1 and short(c["Currencies"][0]["Currency"]) == "GoldPieces":
             it = short(p[0]["Item"]); price = c["Currencies"][0]["Quantity"] / p[0]["Quantity"]
@@ -1162,7 +1166,7 @@ def export_profit(gd, save):
         if d.get("sub") and "subName" not in d: d["subName"] = cat_names.get(d["sub"], d["sub"])
     # --- shop upgrades with skilling bonuses, bonfires
     shop = []
-    for s in O["ShopPurchase"]:
+    for s in shop_purchases:
         bon = _bon_list((s.get("Provides") or {}).get("Bonuses"))
         if not bon: continue
         gp = sum(c["Quantity"] for c in s["Costs"]["Currencies"] if short(c["Currency"]) == "GoldPieces")
@@ -1229,7 +1233,7 @@ def write_app(gd, save, save_path):
 
 # ----------------------------------------------------------------------------
 # Self-update (GitHub Releases)
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 UPDATE_REPO = "tgYun783/melvor2-simulator"
 RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
 EXE_NAME = "Melvor2Simulator.exe"
