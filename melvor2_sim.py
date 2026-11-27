@@ -816,8 +816,19 @@ SKILLING_GLOBAL_GROUPS = {"GlobalPercentActionInterval", "GlobalFlatActionInterv
 
 def parse_skilling(raw):
     """Toolbelt / pets / shop purchases / mastery-guild tasks / wallet / bonfire from the decoded save."""
-    out = dict(toolbelt={}, pets=[], shop={}, guild_tasks={}, gp=0, bonfire=None)
+    out = dict(toolbelt={}, pets=[], shop={}, guild_tasks={}, gp=0, bonfire=None, skill_food={})
     def is_id(p): return raw[p + 1:p + 12] == b"MelvorBase:"
+    # skill entities: [len][MelvorBase:Skill][i32 section len][i32 components] ... "\x04Food"[i32 len][u8 has][item][i64 qty]
+    ents = []
+    for m in re.finditer(rb"(.)(MelvorBase:[A-Za-z]+)(....)(....)\nExperience", raw, re.S):
+        if m.group(1)[0] != len(m.group(2)): continue
+        ents.append((m.start(), m.end(3) + struct.unpack("<i", m.group(3))[0], short(m.group(2).decode())))
+    for m in re.finditer(rb"\x04Food(....)\x01(.)MelvorBase:", raw, re.S):
+        try:
+            rr = Reader(raw, m.start() + 5); rr.i32(); rr.u8(); item = short(rr.str()); qty = rr.i64()
+            sk = next((e[2] for e in ents if e[0] < m.start() < e[1]), None)
+            if sk and item: out["skill_food"][sk] = [item, qty]
+        except Exception: pass
     for m in re.finditer(rb"\x08Toolbelt", raw):
         try:
             rr = Reader(raw, m.end()); rr.i32(); n = rr.i32()
@@ -1022,8 +1033,12 @@ def export_profit(gd, save):
         if eq:
             eb = _bon_list(eq.get("Bonuses"))
             if eb: o["eq"] = eb
+        fd = cap.get("Food")
+        if fd and isinstance(fd.get("Bonuses"), dict) and fd["Bonuses"].get("Component"):
+            o["fd"] = dict(sk=short(fd["Bonuses"]["Component"]["Entity"]), heal=fd["BaseHealing"], bon=_bon_list(fd["Bonuses"]))
         if it.get("Description"): o["d"] = re.sub(r"\[.*?\]", "", it["Description"])[:160]
         items[it["Id"]] = o
+    food_skills = {o["fd"]["sk"] for o in items.values() if "fd" in o}
     # --- category display names
     cat_names = {}
     for key in ("RecipeCategory", "RecipeSubcategory", "WoodcuttingRecipeCategory", "MiningRecipeCategory", "FishingLocation",
@@ -1059,7 +1074,7 @@ def export_profit(gd, save):
         skills.append(dict(id=sid, name=ko, kind=kind, slots=slots,
                            ranks=[dict(id=r["Id"], name=r["DisplayName"], pct=r["PointPercentRequired"]) for r in rk], rankBon=rbon,
                            pet=dict(id=pet["Id"], name=pet["DisplayName"], bon=_bon_list(pet.get("Bonuses"))) if pet else None,
-                           guild=dict(pts=pts, total=total, rank=rank), lvl=levels.get(sid, 1)))
+                           guild=dict(pts=pts, total=total, rank=rank), lvl=levels.get(sid, 1), food=sid in food_skills))
     # --- recipes
     def base(r, sid, kind, cat_key="Category"):
         # recipe Ids repeat across skills (Topaz vein vs Topaz cutting, Treant Remains log vs firemaking...), so the
@@ -1213,7 +1228,7 @@ def export_profit(gd, save):
         if sk: tb.setdefault(sk, {})[slot] = v
     bank_value = sum(q * items[k]["sell"] for k, q in save["bank"].items() if k in items)
     psave = dict(toolbelt=tb, pets=save["pets"], shop=save["shop"], bonfire=save["bonfire"], gp=save["gp"], bankValue=bank_value,
-                 astro=save.get("astro") or {})
+                 astro=save.get("astro") or {}, skillFood={k: v[0] for k, v in (save.get("skill_food") or {}).items()})
     # alternative reward modes (Sacrificial Anvil): per-recipe toggle in the game; the sim offers it per skill/category.
     # Per completion: one roll decides xp×mult / sale×mult (weights), every Step rolls the collectable weight;
     # products are converted to their SellsFor GP (×sale mult) instead of entering the bank.
@@ -1249,7 +1264,7 @@ def write_app(gd, save, save_path):
 
 # ----------------------------------------------------------------------------
 # Self-update (GitHub Releases)
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 UPDATE_REPO = "tgYun783/melvor2-simulator"
 RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
 EXE_NAME = "Melvor2Simulator.exe"

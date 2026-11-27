@@ -61,9 +61,10 @@
 
   /* ---------------------------------- config ---------------------------------- */
   function defaultPcfg() {
-    var lv = {}, tb = {}, pets = {}, shop = {}, rank = {};
+    var lv = {}, tb = {}, pets = {}, shop = {}, rank = {}, food = {};
     SKILLS.forEach(function (s) {
       lv[s.id] = s.lvl; rank[s.id] = s.guild.rank; tb[s.id] = {};
+      if (s.food) food[s.id] = (PB.save.skillFood || {})[s.id] || null;
       var st = (PB.save.toolbelt || {})[s.id] || {};
       s.slots.forEach(function (sl) { tb[s.id][sl.id] = st[sl.id] ? st[sl.id][0] : null; });
       if (s.pet) pets[s.pet.id] = PB.save.pets.indexOf(s.pet.id) >= 0;
@@ -77,12 +78,12 @@
     });
     var distract = {};
     (PB.distract || []).forEach(function (L) { distract[L.loc] = {}; L.items.forEach(function (d) { distract[L.loc][d.id] = d.met === true; }); });
-    return { levels: lv, tb: tb, pets: pets, shop: shop, rank: rank, bonfire: { id: PB.save.bonfire ? PB.save.bonfire.id : null, active: !!(PB.save.bonfire && PB.save.bonfire.active) },
+    return { levels: lv, tb: tb, food: food, pets: pets, shop: shop, rank: rank, bonfire: { id: PB.save.bonfire ? PB.save.bonfire.id : null, active: !!(PB.save.bonfire && PB.save.bonfire.active) },
       astro: astro, distract: distract, farm: { water: true, compost: null }, ranch: { fed: true, treats: true, pets: true, count: 1 }, anvil: {}, src: {}, onlyOk: true };
   }
   var pcfg = LS.get("pcfg", null) || defaultPcfg();
   // keep shape in sync with the data (new slots / purchases)
-  (function () { var d = defaultPcfg(); ["levels", "pets", "shop", "rank"].forEach(function (k) { pcfg[k] = Object.assign({}, d[k], pcfg[k] || {}); }); pcfg.tb = pcfg.tb || {}; SKILLS.forEach(function (s) { pcfg.tb[s.id] = Object.assign({}, d.tb[s.id], pcfg.tb[s.id] || {}); }); pcfg.src = pcfg.src || {}; pcfg.bonfire = pcfg.bonfire || d.bonfire; if (pcfg.onlyOk == null) pcfg.onlyOk = true;
+  (function () { var d = defaultPcfg(); ["levels", "pets", "shop", "rank"].forEach(function (k) { pcfg[k] = Object.assign({}, d[k], pcfg[k] || {}); }); pcfg.tb = pcfg.tb || {}; SKILLS.forEach(function (s) { pcfg.tb[s.id] = Object.assign({}, d.tb[s.id], pcfg.tb[s.id] || {}); }); pcfg.food = Object.assign({}, d.food, pcfg.food || {}); pcfg.src = pcfg.src || {}; pcfg.bonfire = pcfg.bonfire || d.bonfire; if (pcfg.onlyOk == null) pcfg.onlyOk = true;
     pcfg.farm = Object.assign({}, d.farm, pcfg.farm || {}); pcfg.ranch = Object.assign({}, d.ranch, pcfg.ranch || {}); pcfg.anvil = pcfg.anvil || {};
     pcfg.distract = pcfg.distract || {}; Object.keys(d.distract).forEach(function (k) { pcfg.distract[k] = Object.assign({}, d.distract[k], pcfg.distract[k] || {}); });
     pcfg.astro = pcfg.astro || {}; Object.keys(d.astro).forEach(function (k) { var o = pcfg.astro[k] || {}; pcfg.astro[k] = { minor: Object.assign({}, d.astro[k].minor, o.minor || {}), major: Object.assign({}, d.astro[k].major, o.major || {}) }; }); })();
@@ -96,6 +97,7 @@
     SKILLS.forEach(function (s) {
       var tb = pcfg.tb[s.id] || {};
       s.slots.forEach(function (sl) { var id = tb[sl.id]; if (id && ITEMS[id] && ITEMS[id].tb) add(ITEMS[id].tb.bon, 1, iname(id)); });
+      var fid = s.food ? pcfg.food[s.id] : null; if (fid && ITEMS[fid] && ITEMS[fid].fd) add(ITEMS[fid].fd.bon, 1, "음식 " + iname(fid));
       if (s.pet && pcfg.pets[s.pet.id]) add(s.pet.bon, 1, "펫 " + s.pet.name);
       var ri = rankIdx(s.id, pcfg.rank[s.id]);
       s.rankBon.forEach(function (rb) { if (rankIdx(s.id, rb.rank) <= ri) add(rb.bon, 1, "길드 " + rb.name); });
@@ -475,6 +477,18 @@
         sel.addEventListener("change", function () { pcfg.tb[s.id][sl.id] = sel.value || null; pchanged(); });
         row.appendChild(sel); body.appendChild(row);
       });
+      if (s.food) {
+        var fcur = pcfg.food[s.id] || null, fsave = P0.food[s.id] || null; if (fcur) active++;
+        var frow = document.createElement("div"); frow.className = "tbslot" + (fcur !== fsave ? " ch" : "");
+        frow.innerHTML = "<span class=sn title='스킬 음식 슬롯 (보너스는 장착 중 상시 적용, 소모량은 미반영)'>음식</span>";
+        var fsel = document.createElement("select");
+        var fcands = Object.keys(ITEMS).filter(function (id) { return ITEMS[id].fd && ITEMS[id].fd.sk === s.id; });
+        fcands.sort(function (a, b) { var oa = owned(a) ? 0 : 1, ob = owned(b) ? 0 : 1; return oa - ob || ITEMS[a].fd.heal - ITEMS[b].fd.heal; });
+        var f0 = document.createElement("option"); f0.value = ""; f0.textContent = "– 없음 –"; fsel.appendChild(f0);
+        fcands.forEach(function (id) { var o = document.createElement("option"); o.value = id; var it = ITEMS[id]; o.textContent = (owned(id) ? "✓ " : "") + it.n + " · 회복 " + it.fd.heal + (it.fd.bon.length ? " · " + it.fd.bon.map(bonText).join(", ") : ""); o.title = it.d || ""; if (id === fcur) o.selected = true; fsel.appendChild(o); });
+        fsel.addEventListener("change", function () { pcfg.food[s.id] = fsel.value || null; pchanged(); });
+        frow.appendChild(fsel); body.appendChild(frow);
+      }
       // pet / guild
       var h2 = document.createElement("div"); h2.className = "sub-h"; h2.textContent = "펫 · 길드"; body.appendChild(h2);
       if (s.pet) {
@@ -715,7 +729,7 @@
     h += "<h3>적용된 보너스</h3>";
     if (c.lines.length) { h += "<table>" + c.lines.map(function (l) { return "<tr><td>" + esc(l.k) + "</td><td class=r>" + esc(String(l.v)) + "</td><td class=src>" + esc((l.src || []).map(function (s) { return s.src; }).join(", ")) + "</td></tr>"; }).join("") + "</table>"; }
     else h += "<div class=note>이 활동에 적용되는 보너스가 없습니다.</div>";
-    var notes = c.notes.slice(); if (r.kind === "thief") notes.push("HP 손실은 음식 비용으로 환산하지 않음");
+    var notes = c.notes.slice(); if (r.kind === "thief") notes.push("HP 손실은 음식 소모·비용으로 환산하지 않음");
     notes.push("소모성 툴벨트 아이템(물약 등)의 소모 비용은 미반영");
     h += "<div class=warnbox>" + notes.map(esc).join("<br>") + "</div></div>";
     d.innerHTML = h;
