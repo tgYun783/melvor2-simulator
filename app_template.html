@@ -189,7 +189,7 @@ td .nm{font-weight:600} td .sub{color:var(--muted);font-size:11px;margin-left:6p
     <select id="presetSel"><option value="">프리셋 불러오기…</option></select>
     <button class="small" id="presetSave" title="현재 설정을 이름 붙여 저장">저장</button>
     <button class="small" id="presetDel" title="선택한 프리셋 삭제">삭제</button>
-    <button class="small" id="resetSave" title="세이브 파일을 다시 읽어 장비·레벨·음식을 현재 상태로 갱신">↺ 세이브 갱신</button>
+    <button class="small" id="resetSave" title="세이브 파일을 다시 읽어 장비·레벨·음식·기도·물약을 현재 상태로 갱신">↺ 세이브 갱신</button>
   </div>
 
   <details class="sec" open><summary>레벨 <span class="hint" id="lvHint"></span></summary>
@@ -239,7 +239,7 @@ td .nm{font-weight:600} td .sub{color:var(--muted);font-size:11px;margin-left:6p
       • 최대타(근접/원거리) = floor(22+레벨+(레벨+17)×힘/64), 마법 = floor(주문최대타×(1+피해보너스)×(1+(레벨+1)/200))<br>
       • 저항 = Protection/(상대 Power+Protection) 최대 70%, 삼각형 ±15%; 피해 순서 저항 → Ward → Armour → 최소 1<br>
       • 자동식사: HP ≤ round(최대HP×임계)이면 floor((최대HP−HP)/회복량) 개를 먹음 (최소 1). HP 자연회복 없음<br>
-      • XP = 준 체력 피해×스탠스 배율 + 처치 시 배율×(4×Armour+50×Ward). 스폰 대기 3초<br>
+      • XP = 준 체력 피해×스탠스 배율 + 처치 시 배율×(4×Armour+50×Ward). 기도 XP = 기도 사용 중 체력 피해를 준 타격마다 √(3+0.2×피해×기도 기본 비용 합). 기도는 포인트와 관계없이 계속 유지된다고 가정. 스폰 대기 3초<br>
       • 최대타 = floor((기본×(1+최대타%))×(1+삼각형)). 기도·물약·원소 보너스는 최대타%에 합산. 피해는 최소타~최대타, 치명타 기본 ×1.5<br>
       • 기도: 내 공격 턴(공격 기도) 또는 적 공격 턴(방어 기도)마다 비용 max(비용+보정, 1) 소모. 물약: 내 턴이 끝날 때마다 1개 소모<br>
       • 미반영: 반사·조건부(슬레이어 과제 등) 효과, 장비 고유 보너스, TurnCounting 계열 적 패시브. 사망 시에도 시뮬레이션은 계속되며 사망/시간으로 표시
@@ -415,7 +415,9 @@ var Engine = (function () {
         return;
       }
       if (m.t === "Character") {
-        if (s === "FlatCombatStatValue" && m.cs) r.stats[m.cs] = (r.stats[m.cs] || 0) + v;
+        // the sim has no player Armour / Ward damage reduction, so those bonuses (e.g. Zenith) are listed as unmodeled
+        if (s === "FlatCombatStatValue" && (m.cs === "Armour" || m.cs === "MaximumWard")) r.other.push(src + ": 플레이어 " + m.cs + " +" + v + " (플레이어 " + m.cs + " 미구현)");
+        else if (s === "FlatCombatStatValue" && m.cs) r.stats[m.cs] = (r.stats[m.cs] || 0) + v;
         else if (s === "PercentMaxHit") r.pctMaxHit += v;
         else if (s === "FlatPowerRating") r.pow += v;
         else if (s === "FlatProtectionRating") r.prot += v;
@@ -461,6 +463,8 @@ var Engine = (function () {
     }
     // prayer cost per consuming turn: max(int(cost + flat), 1) (PrayerStats.ModifyCost), split by whose attack turn pays it
     r.costPlayer = 0; r.costEnemy = 0;
+    // prayer XP uses the sum of the active prayers' base costs (CombatPrayerComponent BaseCurrencyCost)
+    r.prayerBase = r.prayers.reduce(function (a, p) { return a + (p.cost || 0); }, 0);
     r.prayers.forEach(function (p) { var c = Math.max(Math.trunc(p.cost + r.costFlat), 1); p.costMod = c; if (p.on === "Enemy") r.costEnemy += c; else r.costPlayer += c; });
     r.critCh = Math.min(1, Math.max(0, r.critCh)); r.critMult = Math.max(1.5 + r.critMult, 1);
     return r;
@@ -551,7 +555,7 @@ var Engine = (function () {
     var hp = P.maxHp, t = 0, idx = 0, thresh = P.threshHp, heal = P.healAmount;
     var xpPct = P.xpPct || {}, foodPres = P.foodPres || 0;
     function addXp(m) { for (var k in P.xpRates) res.xp[k] = (res.xp[k] || 0) + P.xpRates[k] * m * (1 + (xpPct[k] || 0)); }
-    var M = P.mods || { pctMaxHit: 0, minPct: 0, flatMin: 0, critCh: 0, critMult: 1.5, hitFlat: 0, wardDbl: 0, avoid: {}, enemyArmour: 0, enemyWard: 0, costPlayer: 0, costEnemy: 0, costPres: 0, potion: null };
+    var M = P.mods || { pctMaxHit: 0, minPct: 0, flatMin: 0, critCh: 0, critMult: 1.5, hitFlat: 0, wardDbl: 0, avoid: {}, enemyArmour: 0, enemyWard: 0, costPlayer: 0, costEnemy: 0, costPres: 0, prayerBase: 0, potion: null };
     function spawn(i, start) {
       var e = seq[i % seq.length], tri = B.triangle[P.style + "|" + e.style], el = 1;
       P.elements.forEach(function (pe) { el += (B.elemental[pe + "|" + e.element] || 1) - 1; });
@@ -605,6 +609,8 @@ var Engine = (function () {
           if (f.armour && !f.armourBroken) { dmg -= f.armour; if (dmg >= f.armour) f.armourBroken = true; }
           dmg = Math.max(1, dmg);
           var dealt = Math.min(dmg, f.hp); f.hp -= dmg; res.dmgDealt += dealt; addXp(dealt);
+          // prayer XP per hit that deals HP damage: sqrt(3 + 0.2 * damage * base cost) (PrayerExperienceStats)
+          if (M.prayerBase > 0 && dealt > 0) res.xp.Prayer = (res.xp.Prayer || 0) + Math.sqrt(3 + 0.2 * dealt * M.prayerBase) * (1 + (xpPct.Prayer || 0));
           if (f.hp <= 0) {
             res.kills++; res.fightMs += t - f.start; if (e.killXp) addXp(e.killXp); addLoot(e.drops, false);
             idx++; if (idx % seq.length === 0) { res.loops++; addLoot(rewards, true); }
@@ -779,7 +785,7 @@ function renderPrayers() {
   grp("보유 중", owned); grp("전체", rest);
   ps.onchange = function () { cfg.potion = ps.value || null; changed(); };
   var M = P.mods, parts = [];
-  if (M.prayers.length && !(B.player.prayerPoints > 0)) parts.push("<span class=warn>세이브의 기도 포인트가 0이라 게임에서는 기도가 꺼집니다. 시뮬레이션은 켜진 것으로 계산합니다.</span>");
+  if (M.prayers.length && !(B.player.prayerPoints > 0)) parts.push("<span class=warn>세이브의 기도 포인트가 0입니다. 시뮬레이션은 기도가 계속 유지된다고 가정하므로, 결과 상세의 시간당 기도 포인트만큼 포인트를 채워 두어야 합니다.</span>");
   if (M.prayers.length) parts.push("기도 비용 <b>" + (M.costPlayer ? M.costPlayer + "pt/내 공격" : "") + (M.costPlayer && M.costEnemy ? " + " : "") + (M.costEnemy ? M.costEnemy + "pt/적 공격" : "") + "</b> · 보유 " + (B.player.prayerPoints || 0).toLocaleString() + "pt");
   if (M.potion) parts.push(M.potion.never ? "<span class=warn>" + esc(M.potion.n) + ": 이 조건(" + (M.potion.needPrayer ? "기도 사용 중" : "슬레이어 과제 중") + ")에서는 효과·소모 없음</span>" : "물약은 내 턴마다 1개 소모" + (M.potion.needWard ? " (적에게 Ward가 있을 때만)" : "") + ", 개당 " + fmt(M.potion.price, 0) + " GP · 보유 " + potionQty(M.potion.id).toLocaleString() + "개");
   if (M.other.length) parts.push("<span class=muted>미반영: " + esc(M.other.join(" · ")) + "</span>");

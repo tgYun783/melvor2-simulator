@@ -345,7 +345,10 @@ def player_combat_mods(gd, prayer_ids, potion_id, style):
                "PercentEvasionRating": "eva_pct", "PercentAttackInterval": "int_pct", "FlatAttackInterval": "int_flat",
                "MinHitBasedOnMaxHit": "min_pct", "FlatMinHit": "flat_min", "FlatCriticalHitChance": "crit_ch",
                "FlatCriticalHitMultiplier": "crit_mult", "FlatLight": "light", "DoubleWardDamageChance": "ward_dbl"}
-        if m["t"] == "Character" and s_ == "FlatCombatStatValue" and m.get("cs"): r["stats"][m["cs"]] += v
+        # the sim has no player Armour / Ward damage reduction, so those bonuses (e.g. Zenith) are listed as unmodeled
+        if m["t"] == "Character" and s_ == "FlatCombatStatValue" and m.get("cs") in ("Armour", "MaximumWard"):
+            r["other"].append(f"{src}: player {m['cs']} +{v} (not modeled)")
+        elif m["t"] == "Character" and s_ == "FlatCombatStatValue" and m.get("cs"): r["stats"][m["cs"]] += v
         elif m["t"] == "Character" and s_ in key: r[key[s_]] += v
         elif m["t"] == "Target" and s_ == "FlatHitChance": r["hit_flat"] += v
         elif m["t"] == "CombatEffect" and s_ == "AvoidanceChance" and m.get("eff"): r["avoid"][m["eff"]] += v
@@ -368,6 +371,8 @@ def player_combat_mods(gd, prayer_ids, potion_id, style):
                            need_ward="CharacterHasWard" in conds)
     r["cost_player"] = sum(max(int(p["cost"] + r["cost_flat"]), 1) for p in r["prayers"] if p["on"] != "Enemy")
     r["cost_enemy"] = sum(max(int(p["cost"] + r["cost_flat"]), 1) for p in r["prayers"] if p["on"] == "Enemy")
+    # prayer XP uses the sum of the active prayers' base costs (CombatPrayerComponent BaseCurrencyCost)
+    r["prayer_base"] = sum(p["cost"] for p in r["prayers"])
     r["crit_ch"] = min(1.0, max(0.0, r["crit_ch"])); r["crit_mult"] = max(1.5 + r["crit_mult"], 1.0)
     return r
 
@@ -588,6 +593,8 @@ class Sim:
                     dmg = max(1, dmg)
                     dealt = min(dmg, f["hp"]); f["hp"] -= dmg; res["dmg_dealt"] += dealt
                     for skill, rate in p.xp_rates.items(): res["xp"][skill] += dealt * rate
+                    # prayer XP per hit that deals HP damage: sqrt(3 + 0.2 * damage * base cost) (PrayerExperienceStats)
+                    if M["prayer_base"] > 0 and dealt > 0: res["xp"]["Prayer"] += math.sqrt(3 + 0.2 * dealt * M["prayer_base"])
                     if f["hp"] <= 0:
                         res["kills"] += 1; res["fight_ms"] += t - f["start"]
                         if e.kill_xp_factor:
@@ -1411,7 +1418,7 @@ def write_app(gd, save, save_path):
 
 # ----------------------------------------------------------------------------
 # Self-update (GitHub Releases)
-VERSION = "0.3.5"
+VERSION = "0.3.6"
 UPDATE_REPO = "tgYun783/melvor2-simulator"
 RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
 EXE_NAME = "Melvor2Simulator.exe"
