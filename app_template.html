@@ -224,6 +224,14 @@ td .nm{font-weight:600} td .sub{color:var(--muted);font-size:11px;margin-left:6p
     </div>
   </details>
 
+  <details class="sec" open><summary>기도 · 물약 <span class="hint" id="prHint"></span></summary>
+    <div class="body">
+      <div id="prayerRows"></div>
+      <div class="row"><label>전투 물약</label><select id="potion" class="grow"></select></div>
+      <div class="note" id="prayerNote"></div>
+    </div>
+  </details>
+
   <details class="sec"><summary>모델 설명</summary>
     <div class="body note">
       게임 DLL을 디컴파일해 대조한 공식을 그대로 사용합니다.<br>
@@ -232,7 +240,9 @@ td .nm{font-weight:600} td .sub{color:var(--muted);font-size:11px;margin-left:6p
       • 저항 = Protection/(상대 Power+Protection) 최대 70%, 삼각형 ±15%; 피해 순서 저항 → Ward → Armour → 최소 1<br>
       • 자동식사: HP ≤ round(최대HP×임계)이면 floor((최대HP−HP)/회복량) 개를 먹음 (최소 1). HP 자연회복 없음<br>
       • XP = 준 체력 피해×스탠스 배율 + 처치 시 배율×(4×Armour+50×Ward). 스폰 대기 3초<br>
-      • 미반영: 기도, 물약, 장비 고유 보너스, TurnCounting 계열 적 패시브. 사망 시에도 시뮬레이션은 계속되며 사망/시간으로 표시
+      • 최대타 = floor((기본×(1+최대타%))×(1+삼각형)). 기도·물약·원소 보너스는 최대타%에 합산. 피해는 최소타~최대타, 치명타 기본 ×1.5<br>
+      • 기도: 내 공격 턴(공격 기도) 또는 적 공격 턴(방어 기도)마다 비용 max(비용+보정, 1) 소모. 물약: 내 턴이 끝날 때마다 1개 소모<br>
+      • 미반영: 반사·조건부(슬레이어 과제 등) 효과, 장비 고유 보너스, TurnCounting 계열 적 패시브. 사망 시에도 시뮬레이션은 계속되며 사망/시간으로 표시
     </div>
   </details>
 </aside>
@@ -387,6 +397,74 @@ var Engine = (function () {
     if (r.ammoPres) r.texts.push("탄약 보존 " + pc(r.ammoPres)); if (r.runePres) r.texts.push("룬 보존 " + pc(r.runePres));
     return r;
   }
+  var MOD_KO = { FightingSlayerTask: "슬레이어 과제 중", PrayerActive: "기도 사용 중", CharacterHasWard: "적에게 Ward가 있을 때" };
+  // Prayers + combat potion -> aggregated modifiers. Formulas checked against the decompiled game (CharacterStats / TargetCharacterStats).
+  function combatMods(B, cfg, levels, style) {
+    var r = { stats: {}, pow: 0, prot: 0, pctMaxHit: 0, minPct: 0, flatMin: 0, critCh: 0, critMult: 0, accPct: 0, evaPct: 0, intPct: 0, intFlat: 0,
+              light: 0, hitFlat: 0, wardDbl: 0, avoid: {}, ammoPres: 0, runePres: 0, enemyArmour: 0, enemyWard: 0, costFlat: 0, costPres: 0,
+              prayers: [], potion: null, other: [], warnings: [] };
+    function apply(m, src) {
+      if (m.cond) { r.other.push(src + ": " + m.s + " (" + (MOD_KO[m.cond] || m.cond) + "에만, 미반영)"); return; }
+      if (m.style && m.style !== style) return;
+      if (m.dt && m.dt !== "Normal") return;
+      var s = m.s, v = m.v;
+      if (m.who === "Enemy") {
+        if (s === "FlatCombatStatValue" && m.cs === "Armour") r.enemyArmour += v;
+        else if (s === "FlatCombatStatValue" && m.cs === "MaximumWard") r.enemyWard += v;
+        else r.other.push(src + ": 적 " + s);
+        return;
+      }
+      if (m.t === "Character") {
+        if (s === "FlatCombatStatValue" && m.cs) r.stats[m.cs] = (r.stats[m.cs] || 0) + v;
+        else if (s === "PercentMaxHit") r.pctMaxHit += v;
+        else if (s === "FlatPowerRating") r.pow += v;
+        else if (s === "FlatProtectionRating") r.prot += v;
+        else if (s === "PercentAccuracyRating") r.accPct += v;
+        else if (s === "PercentEvasionRating") r.evaPct += v;
+        else if (s === "PercentAttackInterval") r.intPct += v;
+        else if (s === "FlatAttackInterval") r.intFlat += v;
+        else if (s === "MinHitBasedOnMaxHit") r.minPct += v;
+        else if (s === "FlatMinHit") r.flatMin += v;
+        else if (s === "FlatCriticalHitChance") r.critCh += v;
+        else if (s === "FlatCriticalHitMultiplier") r.critMult += v;
+        else if (s === "FlatLight") r.light += v;
+        else if (s === "DoubleWardDamageChance") r.wardDbl += v;
+        else r.other.push(src + ": " + s);
+      } else if (m.t === "Target" && s === "FlatHitChance") r.hitFlat += v;
+      else if (m.t === "CombatEffect" && s === "AvoidanceChance" && m.eff) r.avoid[m.eff] = (r.avoid[m.eff] || 0) + v;
+      else if (m.t === "Prayer" && s === "FlatPrayerCost") r.costFlat += v;
+      else if (m.t === "Prayer" && s === "CostPreservationChance") r.costPres += v;
+      else if (m.t === "AmmoConsumption" && s === "AmmoPreservationChance") r.ammoPres += v;
+      else if (m.t === "MagicSpell" && s === "RunePreservationChance") r.runePres += v;
+      else r.other.push(src + ": " + s);
+    }
+    var byId = {}; (B.prayers || []).forEach(function (p) { byId[p.id] = p; });
+    var used = {};
+    (B.prayerSlots || []).forEach(function (sl) {
+      var pid = (cfg.prayers || {})[sl.id], p = pid && byId[pid];
+      if (!p || used[pid]) return; used[pid] = 1;
+      if ((levels.Prayer || 1) < sl.lv) r.warnings.push("기도 슬롯 " + sl.id + ": 기도 " + sl.lv + " 필요");
+      if ((levels.Prayer || 1) < p.lv) r.warnings.push(p.n + ": 기도 " + p.lv + " 필요 (현재 " + (levels.Prayer || 1) + ")");
+      if (p.req && p.req.length) r.warnings.push(p.n + ": 추가 해금 조건 " + p.req.join(", "));
+      p.mods.forEach(function (m) { apply(m, p.n); });
+      (p.fx || []).forEach(function (f) { r.other.push(p.n + ": " + f + " 효과"); });
+      r.prayers.push({ id: p.id, n: p.n, cost: p.cost, on: p.on });
+    });
+    var pot = cfg.potion && (B.potions || []).filter(function (x) { return x.id === cfg.potion; })[0];
+    if (pot) {
+      pot.mods.forEach(function (m) { apply(m, pot.n); });
+      (pot.fx || []).forEach(function (f) { r.other.push(pot.n + ": " + f + " 효과"); });
+      var ci = pot.consumeIf || [], price = priceOf(B, pot.id) || pot.sell || 0;
+      // a consume condition we cannot evaluate (slayer task) means the potion is never used up here
+      r.potion = { id: pot.id, n: pot.n, price: price, never: ci.indexOf("FightingSlayerTask") >= 0, needPrayer: ci.indexOf("PrayerActive") >= 0, needWard: ci.indexOf("CharacterHasWard") >= 0 };
+      if (r.potion.needPrayer && !r.prayers.length) r.potion.never = true;
+    }
+    // prayer cost per consuming turn: max(int(cost + flat), 1) (PrayerStats.ModifyCost), split by whose attack turn pays it
+    r.costPlayer = 0; r.costEnemy = 0;
+    r.prayers.forEach(function (p) { var c = Math.max(Math.trunc(p.cost + r.costFlat), 1); p.costMod = c; if (p.on === "Enemy") r.costEnemy += c; else r.costPlayer += c; });
+    r.critCh = Math.min(1, Math.max(0, r.critCh)); r.critMult = Math.max(1.5 + r.critMult, 1);
+    return r;
+  }
   function buildPlayer(B, cfg) {
     var levels = Object.assign({ Attack: 1, Strength: 1, Defence: 1, Ranged: 1, Magic: 1, Prayer: 1, Hitpoints: 10 }, cfg.levels);
     var stats = {}, pow = 0, prot = 0, light = cfg.extraLight || 0, warnings = [], unmodeled = [], equipped = {};
@@ -403,6 +481,13 @@ var Engine = (function () {
     var astro = astroBonuses(B, cfg);
     for (var ak in astro.stats) stats[ak] = (stats[ak] || 0) + astro.stats[ak];
     prot += astro.prot;
+    // prayers / potions: their bonuses depend on the stance's style, so resolve the stance first (weapon only)
+    var wItem0 = equipped.Weapon ? B.items[equipped.Weapon] : null, wt0 = B.weaponTypes[(wItem0 && wItem0.w && wItem0.w.type) || "Melee"] || { stances: ["Stab"] };
+    var st0 = wt0.stances.indexOf(cfg.stance) >= 0 ? cfg.stance : (wt0.stances.indexOf(B.player.stanceMap[(wItem0 && wItem0.w && wItem0.w.type) || "Melee"]) >= 0 ? B.player.stanceMap[(wItem0 && wItem0.w && wItem0.w.type) || "Melee"] : wt0.stances[0]);
+    var mods = combatMods(B, cfg, levels, B.stances[st0].style);
+    for (var mk in mods.stats) stats[mk] = (stats[mk] || 0) + mods.stats[mk];
+    pow += mods.pow; prot += mods.prot; light += mods.light;
+    mods.warnings.forEach(function (w) { warnings.push(w); });
     var wItem = equipped.Weapon ? B.items[equipped.Weapon] : null;
     var weaponType = (wItem && wItem.w && wItem.w.type) || "Melee";
     var elements = (wItem && wItem.w && wItem.w.el) || ["Neutral"];
@@ -420,7 +505,7 @@ var Engine = (function () {
     }
     if (wItem && wItem.w && wItem.w.ammo) { var am = equipped.Ammo ? B.items[equipped.Ammo] : null; if (!am || am.ammoType !== wItem.w.ammo) warnings.push(wItem.n + "에는 " + wItem.w.ammo + " 탄약이 필요합니다 (게임에서는 공격 불가)"); }
     var effLevels = Object.assign({}, levels); effLevels.Defence = (effLevels.Defence || 1) + (st.flatDef || 0);
-    var interval = Math.max(250, Math.trunc(stats.AttackInterval || 4000));
+    var interval = Math.max(250, Math.floor(Math.trunc(stats.AttackInterval || 4000) * (1 + mods.intPct) + mods.intFlat));
     var maxHp = levels.Hitpoints * 10;
     var foodItem = B.items[cfg.food], foodHeal = foodItem && foodItem.food ? foodItem.food : 0;
     if (astro.healPct) foodHeal = Math.floor(foodHeal * (1 + astro.healPct));
@@ -428,18 +513,18 @@ var Engine = (function () {
     var ammoId = (wItem && wItem.w && wItem.w.ammo && equipped.Ammo && B.items[equipped.Ammo] && B.items[equipped.Ammo].ammoType === wItem.w.ammo) ? equipped.Ammo : null;
     var runes = (style === "Magic" && spell && spell.runes) ? spell.runes : [];
     var econ = { ammoId: ammoId, ammoPrice: ammoId ? priceOf(B, ammoId) : 0, runes: runes, runeCost: runes.reduce(function (s, x) { return s + x[1] * priceOf(B, x[0]); }, 0),
-                 foodPrice: priceOf(B, cfg.food), itemDbl: astro.itemDbl, curDbl: astro.curDbl, ammoPres: astro.ammoPres, runePres: astro.runePres };
+                 foodPrice: priceOf(B, cfg.food), itemDbl: astro.itemDbl, curDbl: astro.curDbl, ammoPres: astro.ammoPres + mods.ammoPres, runePres: astro.runePres + mods.runePres };
     return {
-      econ: econ,
+      econ: econ, mods: mods,
       levels: levels, effLevels: effLevels, stats: stats, pow: pow, prot: prot, light: light, elements: elements, weaponType: weaponType, allowed: allowed,
       stance: stance, style: style, spell: spell, xpRates: st.xp, interval: interval, maxHp: maxHp, maxHitBase: maxHit(B, style, levels, stats),
-      accuracy: Math.floor(rating(lvSum(B.styles[style].accLv, levels), stats[st.acc] || 0) * (1 + (astro.accPct[style] || 0) + (astro.accPct.all || 0))), combatLevel: Math.floor(lvSum(B.styles[style].clr, levels)),
+      accuracy: Math.floor(rating(lvSum(B.styles[style].accLv, levels), stats[st.acc] || 0) * (1 + (astro.accPct[style] || 0) + (astro.accPct.all || 0) + mods.accPct)), combatLevel: Math.floor(lvSum(B.styles[style].clr, levels)),
       food: cfg.food, foodHeal: foodHeal, aeThreshold: cfg.aeThreshold, aeEff: cfg.aeEff, threshHp: threshHp, healAmount: healAmount,
       warnings: warnings, unmodeled: unmodeled, equipped: equipped, occupied: occ,
       xpPct: astro.xpPct, foodPres: astro.foodPres, astroText: astro.texts, astroOther: astro.other
     };
   }
-  function playerEvasion(B, P, eStance, eStyle) { return rating(lvSum(B.styles[eStyle].evaLv, P.effLevels), P.stats[B.stances[eStance].eva] || 0); }
+  function playerEvasion(B, P, eStance, eStyle) { return Math.floor(rating(lvSum(B.styles[eStyle].evaLv, P.effLevels), P.stats[B.stances[eStance].eva] || 0) * (1 + ((P.mods && P.mods.evaPct) || 0))); }
   function enemyEvasion(B, e, P) { return rating(lvSum(B.styles[P.style].evaLv, e.levels), e.stats[B.stances[P.stance].eva] || 0); }
   function maxBurst(e) {
     var worst = e.maxHit;
@@ -452,7 +537,7 @@ var Engine = (function () {
     var rng = mulberry32(seed), randint = function (n) { return 1 + Math.floor(rng() * n); };
     var T = Math.trunc(hours * 3600 * 1000), RESPAWN = B.respawnMs;
     var dark = Math.max(0, 1 - 0.05 * Math.max(0, darkness - P.light));
-    var res = { kills: 0, deaths: 0, food: 0, healed: 0, dmgTaken: 0, dmgDealt: 0, xp: {}, pAtt: 0, pHit: 0, eAtt: 0, eHit: 0, loops: 0, fightMs: 0, lootGp: 0, dropGp: 0, rewardGp: 0, items: {} };
+    var res = { pTurns: 0, potions: 0, kills: 0, deaths: 0, food: 0, healed: 0, dmgTaken: 0, dmgDealt: 0, xp: {}, pAtt: 0, pHit: 0, eAtt: 0, eHit: 0, loops: 0, fightMs: 0, lootGp: 0, dropGp: 0, rewardGp: 0, items: {} };
     var econ = P.econ || {};
     // expected value of a drop definition (enemy kill or dungeon completion); doubling chances from astrology applied
     function addLoot(d, isReward) {
@@ -466,20 +551,24 @@ var Engine = (function () {
     var hp = P.maxHp, t = 0, idx = 0, thresh = P.threshHp, heal = P.healAmount;
     var xpPct = P.xpPct || {}, foodPres = P.foodPres || 0;
     function addXp(m) { for (var k in P.xpRates) res.xp[k] = (res.xp[k] || 0) + P.xpRates[k] * m * (1 + (xpPct[k] || 0)); }
+    var M = P.mods || { pctMaxHit: 0, minPct: 0, flatMin: 0, critCh: 0, critMult: 1.5, hitFlat: 0, wardDbl: 0, avoid: {}, enemyArmour: 0, enemyWard: 0, costPlayer: 0, costEnemy: 0, costPres: 0, potion: null };
     function spawn(i, start) {
       var e = seq[i % seq.length], tri = B.triangle[P.style + "|" + e.style], el = 1;
       P.elements.forEach(function (pe) { el += (B.elemental[pe + "|" + e.element] || 1) - 1; });
+      // MaxHit = floor((base * (1 + PercentMaxHit) + flat) * (1 + triangle)); elemental bonuses are PercentMaxHit modifiers
+      var mh = Math.max(1, Math.floor(P.maxHitBase * (1 + M.pctMaxHit + el - 1) * tri[0]));
+      var mw = Math.max(0, Math.trunc(e.maxWard + M.enemyWard));
       return {
-        e: e, hp: e.maxHp, ward: e.maxWard, armourBroken: false, start: start,
-        pMaxhit: Math.max(1, Math.floor(P.maxHitBase * tri[0] * el)),
+        e: e, hp: e.maxHp, ward: mw, maxWard: mw, armour: Math.max(0, Math.round(e.armour + M.enemyArmour)), armourBroken: false, start: start,
+        pMaxhit: mh, pMinhit: Math.min(mh, Math.max(1, Math.floor(1 + M.flatMin + mh * M.minPct))),
         eRes: Math.min(0.7, (P.pow + e.prot) > 0 ? e.prot / (P.pow + e.prot) : 0),
         pRes: Math.min(0.7, ((e.pow + P.prot) > 0 ? P.prot / (e.pow + P.prot) : 0) * tri[1]),
-        pHit: hitChance(P.accuracy * dark, enemyEvasion(B, e, P)),
+        pHit: Math.min(1, Math.max(0, hitChance(P.accuracy * dark, enemyEvasion(B, e, P)) + M.hitFlat)),
         eHit: hitChance(e.accuracy, playerEvasion(B, P, e.stance, e.style) * dark)
       };
     }
     var f = spawn(0, 0), pNext = P.interval, eNext = f.e.interval, dots = [], stunned = 0;
-    var fb = spawn(seq.length - 1, 0), info = { pHit: fb.pHit, eHit: fb.eHit, pMaxhit: fb.pMaxhit, eRes: fb.eRes, pRes: fb.pRes };
+    var fb = spawn(seq.length - 1, 0), info = { pHit: fb.pHit, eHit: fb.eHit, pMaxhit: fb.pMaxhit, pMinhit: fb.pMinhit, eRes: fb.eRes, pRes: fb.pRes };
     function takeDamage(a) {
       a = Math.max(1, Math.trunc(a)); hp -= a; res.dmgTaken += a;
       if (hp <= 0) { res.deaths++; hp = P.maxHp; return true; }
@@ -502,13 +591,18 @@ var Engine = (function () {
       }
       if (pNext <= eNext) {
         pNext += P.interval;
+        // combat potions are used up when the player's turn ends (ToolbeltCapability ConsumesOn CharacterTurnEnded)
+        res.pTurns++;
+        if (M.potion && !M.potion.never && (!M.potion.needWard || f.ward > 0)) res.potions++;
         if (stunned > 0) { stunned--; continue; }
         res.pAtt++;
         if (rng() < f.pHit) {
           res.pHit++;
-          var dmg = randint(f.pMaxhit); dmg = Math.floor(dmg * (1 - f.eRes));
-          if (f.ward > 0) { dmg = Math.floor(dmg * (1 - f.ward / e.maxWard)); f.ward--; }
-          if (e.armour && !f.armourBroken) { dmg -= e.armour; if (dmg >= e.armour) f.armourBroken = true; }
+          var dmg = f.pMinhit + Math.floor(rng() * (f.pMaxhit - f.pMinhit + 1));
+          if (M.critCh && rng() < M.critCh) dmg = Math.trunc(dmg * M.critMult);
+          dmg = Math.floor(dmg * (1 - f.eRes));
+          if (f.ward > 0) { dmg = Math.floor(dmg * (1 - f.ward / f.maxWard)); f.ward = Math.max(0, f.ward - (M.wardDbl && rng() < M.wardDbl ? 2 : 1)); }
+          if (f.armour && !f.armourBroken) { dmg -= f.armour; if (dmg >= f.armour) f.armourBroken = true; }
           dmg = Math.max(1, dmg);
           var dealt = Math.min(dmg, f.hp); f.hp -= dmg; res.dmgDealt += dealt; addXp(dealt);
           if (f.hp <= 0) {
@@ -529,7 +623,7 @@ var Engine = (function () {
           var nd = Math.max(1, Math.floor(randint(e.maxHit) * (1 - f.pRes)));
           died = takeDamage(nd);
           if (e.lifesteal) f.hp = Math.min(e.maxHp, f.hp + Math.floor(nd * e.lifesteal));
-          for (var q = 0; q < e.onhitDots.length; q++) { var od = e.onhitDots[q]; if (!died && rng() < od.ch) dots.push([t + od.interval, od.count, Math.max(1, Math.floor(e.maxHit * od.pct)), od.interval]); }
+          for (var q = 0; q < e.onhitDots.length; q++) { var od = e.onhitDots[q]; if (!died && rng() < od.ch && !(M.avoid[od.eff] && rng() < M.avoid[od.eff])) dots.push([t + od.interval, od.count, Math.max(1, Math.floor(e.maxHit * od.pct)), od.interval]); }
         }
       } else {
         var landed = false;
@@ -555,6 +649,7 @@ var Engine = (function () {
         if (landed && !died) {
           for (var oi = 0; oi < special.onhit.length; oi++) {
             var eff = special.onhit[oi]; if (rng() >= eff.ch) continue;
+            if (eff.eff && M.avoid[eff.eff] && rng() < M.avoid[eff.eff]) continue;
             if (eff.kind === "dot") dots.push([t + eff.interval, eff.count, Math.max(1, Math.floor(e.maxHit * eff.pct)), eff.interval]);
             else if (eff.kind === "stun") stunned += eff.turns || 1;
           }
@@ -572,6 +667,9 @@ var Engine = (function () {
       attacksH: res.pAtt / hrs, lootGpH: res.lootGp / hrs, dropGpH: res.dropGp / hrs, rewardGpH: res.rewardGp / hrs,
       ammoCostH: res.pAtt / hrs * (1 - (econ.ammoPres || 0)) * (econ.ammoPrice || 0), runeCostH: res.pAtt / hrs * (1 - (econ.runePres || 0)) * (econ.runeCost || 0),
       foodCostH: res.food / hrs * (econ.foodPrice || 0),
+      // prayer cost is paid once per attack turn of the character named in ConsumesOn, minus CostPreservationChance
+      prayerPtsH: (res.pAtt * M.costPlayer + res.eAtt * M.costEnemy) / hrs * (1 - Math.min(1, M.costPres || 0)),
+      potionH: res.potions / hrs, potionCostH: M.potion ? res.potions / hrs * M.potion.price : 0,
       topDrops: Object.keys(res.items).map(function (id) { return { id: id, n: nameOf(B, id), qtyH: res.items[id] / hrs, gpH: res.items[id] / hrs * priceOf(B, id) }; }).sort(function (a, b) { return b.gpH - a.gpH; }).slice(0, 10)
     }, info);
   }
@@ -588,7 +686,7 @@ var Engine = (function () {
       id: tg.id, kind: tg.kind, name: tg.name, area: tg.area, category: tg.category, difficulty: tg.difficulty, darkness: tg.darkness, unlock: tg.unlock, seq: tg.seq,
       enemyCl: ecl, enemyHp: ehp, enemyStyle: Object.keys(styles).sort().join("/"), enemyMaxhit: emh, burst: burst, safe: burst <= P.threshHp,
       combatXpH: comb, hpXpH: r.xpH.Hitpoints || 0, xpPerFood: r.foodH > 0 ? comb / r.foodH : null, notes: Object.keys(notes).sort(), simHours: hours,
-      netGpH: r.lootGpH + r.dropGpH + r.rewardGpH - r.ammoCostH - r.runeCostH - r.foodCostH
+      netGpH: r.lootGpH + r.dropGpH + r.rewardGpH - r.ammoCostH - r.runeCostH - r.foodCostH - r.potionCostH
     }, r);
   }
   return { priceOf: priceOf, nameOf: nameOf, buildPlayer: buildPlayer, run: run, runTarget: runTarget, maxBurst: maxBurst, playerResVs: playerResVs, playerEvasion: playerEvasion, enemyEvasion: enemyEvasion, hitChance: hitChance, COMBAT_SKILLS: COMBAT_SKILLS };
@@ -616,7 +714,8 @@ function defaultCfg() {
   var eq = {}; B.slots.forEach(function (s) { eq[s.id] = null; });
   for (var s in B.player.equipment) { var v = B.player.equipment[s]; if (v[1] !== -1 && B.items[v[0]]) eq[s] = v[0]; }
   var food = B.player.food && B.items[B.player.food[0]] && B.items[B.player.food[0]].food ? B.player.food[0] : (B.items.Trout ? "Trout" : Object.keys(B.items).filter(function (k) { return B.items[k].food; })[0]);
-  return { levels: Object.assign({}, B.player.levels), equipment: eq, stance: null, spell: null, food: food, aeThreshold: 0.25, aeEff: 1.0, extraLight: 0, astro: true };
+  var prayers = Object.assign({}, B.player.prayers || {}), potion = B.player.potion && B.player.potion[0] || null;
+  return { levels: Object.assign({}, B.player.levels), equipment: eq, stance: null, spell: null, food: food, aeThreshold: 0.25, aeEff: 1.0, extraLight: 0, astro: true, prayers: prayers, potion: potion };
 }
 var cfg = LS.get("cfg", null) || defaultCfg();
 // guard against stale saved configs
@@ -632,7 +731,62 @@ function astroSel() { var p = LS.get("pcfg", null); return p && p.astro ? p.astr
 function changed() { cfg.astroSel = astroSel(); P = Engine.buildPlayer(B, cfg); LS.set("cfg", cfg); renderSide(); renderStats(); if (rows && lastRunCfg && JSON.stringify(lastRunCfg) !== JSON.stringify(cfg)) $("#stale").classList.remove("hidden"); }
 
 // ---------------- sidebar ----------------
-function renderSide() { renderLevels(); renderSlots(); renderStances(); renderFood(); }
+function renderSide() { renderLevels(); renderSlots(); renderStances(); renderFood(); renderPrayers(); }
+
+function potionQty(id) { var q = B.player.bankAll && B.player.bankAll[id] || 0; if (B.player.potion && B.player.potion[0] === id) q += Math.max(0, B.player.potion[1]); return q; }
+function modText(m) {
+  var v = m.v, pc = function (x) { return (x > 0 ? "+" : "") + Math.round(x * 1000) / 10 + "%"; }, n = function (x) { return (x > 0 ? "+" : "") + x; };
+  var st = m.style ? " (" + m.style + ")" : "";
+  switch (m.s) {
+    case "FlatCombatStatValue": return (m.who === "Enemy" ? "적 " : "") + (m.cs || "").replace(/Bonus$/, "") + " " + (m.cs === "Lifesteal" ? pc(v) : n(v));
+    case "PercentMaxHit": return "최대타 " + pc(v) + st;
+    case "FlatPowerRating": return "Power " + n(v) + st; case "FlatProtectionRating": return "Protection " + n(v);
+    case "PercentAccuracyRating": return "명중 " + pc(v); case "PercentEvasionRating": return "회피 " + pc(v);
+    case "PercentAttackInterval": return "공격 간격 " + pc(v); case "FlatAttackInterval": return "공격 간격 " + n(v) + "ms";
+    case "MinHitBasedOnMaxHit": return "최소타 = 최대타의 " + pc(v); case "FlatCriticalHitChance": return "치명타 " + pc(v);
+    case "FlatCriticalHitMultiplier": return "치명타 배율 " + pc(v); case "FlatHitChance": return "명중률 " + pc(v);
+    case "AvoidanceChance": return (m.eff || "") + " 회피 " + pc(v); case "FlatPrayerCost": return "기도 비용 " + n(v);
+    case "CostPreservationChance": return "기도 비용 보존 " + pc(v); case "FlatLight": return "Light " + n(v);
+    case "DoubleWardDamageChance": return "Ward 2배 피해 " + pc(v); case "PercentAttackReflect": return "반사 " + pc(v);
+    case "AmmoPreservationChance": return "탄약 보존 " + pc(v); case "RunePreservationChance": return "룬 보존 " + pc(v);
+    case "NoDeathPenalty": return "사망 페널티 없음";
+    default: return m.s + " " + v;
+  }
+}
+function renderPrayers() {
+  var box = $("#prayerRows"); box.innerHTML = ""; cfg.prayers = cfg.prayers || {};
+  var plv = cfg.levels.Prayer || 1;
+  (B.prayerSlots || []).forEach(function (sl) {
+    var list = (B.prayers || []).filter(function (p) { return p.type === sl.type; });
+    if (!list.length) return;
+    var row = document.createElement("div"); row.className = "row";
+    var lab = document.createElement("label"); lab.textContent = "기도 " + sl.id.replace(/^CombatSlot/, "") + (sl.lv > 1 ? "" : ""); row.appendChild(lab);
+    var sel = document.createElement("select"); sel.className = "grow";
+    var o0 = document.createElement("option"); o0.value = ""; o0.textContent = plv < sl.lv ? "— (슬롯 해금: 기도 " + sl.lv + ")" : "— 없음"; sel.appendChild(o0);
+    list.slice().sort(function (a, b) { return a.lv - b.lv; }).forEach(function (p) {
+      var o = document.createElement("option"); o.value = p.id;
+      o.textContent = (p.lv > plv ? "🔒 " : "") + p.n + " (Lv " + p.lv + ", " + p.cost + "pt/" + (p.on === "Enemy" ? "적 턴" : "내 턴") + ") " + p.mods.map(modText).join(", ");
+      if (cfg.prayers[sl.id] === p.id) o.selected = true; sel.appendChild(o);
+    });
+    sel.onchange = function () { if (sel.value) cfg.prayers[sl.id] = sel.value; else delete cfg.prayers[sl.id]; changed(); };
+    row.appendChild(sel); box.appendChild(row);
+  });
+  var ps = $("#potion"); ps.innerHTML = "";
+  var o0 = document.createElement("option"); o0.value = ""; o0.textContent = "— 없음"; ps.appendChild(o0);
+  var pots = (B.potions || []).slice();
+  var owned = pots.filter(function (x) { return potionQty(x.id) > 0; }), rest = pots.filter(function (x) { return potionQty(x.id) <= 0; });
+  function grp(label, arr) { if (!arr.length) return; var og = document.createElement("optgroup"); og.label = label; arr.forEach(function (x) { var o = document.createElement("option"); o.value = x.id; var q = potionQty(x.id); o.textContent = x.n + (q ? " (보유 " + q.toLocaleString() + ")" : "") + " · " + x.mods.map(modText).join(", "); if (cfg.potion === x.id) o.selected = true; og.appendChild(o); }); ps.appendChild(og); }
+  grp("보유 중", owned); grp("전체", rest);
+  ps.onchange = function () { cfg.potion = ps.value || null; changed(); };
+  var M = P.mods, parts = [];
+  if (M.prayers.length && !(B.player.prayerPoints > 0)) parts.push("<span class=warn>세이브의 기도 포인트가 0이라 게임에서는 기도가 꺼집니다. 시뮬레이션은 켜진 것으로 계산합니다.</span>");
+  if (M.prayers.length) parts.push("기도 비용 <b>" + (M.costPlayer ? M.costPlayer + "pt/내 공격" : "") + (M.costPlayer && M.costEnemy ? " + " : "") + (M.costEnemy ? M.costEnemy + "pt/적 공격" : "") + "</b> · 보유 " + (B.player.prayerPoints || 0).toLocaleString() + "pt");
+  if (M.potion) parts.push(M.potion.never ? "<span class=warn>" + esc(M.potion.n) + ": 이 조건(" + (M.potion.needPrayer ? "기도 사용 중" : "슬레이어 과제 중") + ")에서는 효과·소모 없음</span>" : "물약은 내 턴마다 1개 소모" + (M.potion.needWard ? " (적에게 Ward가 있을 때만)" : "") + ", 개당 " + fmt(M.potion.price, 0) + " GP · 보유 " + potionQty(M.potion.id).toLocaleString() + "개");
+  if (M.other.length) parts.push("<span class=muted>미반영: " + esc(M.other.join(" · ")) + "</span>");
+  parts.push("<span class=faint>기도 포인트는 수급 방식이 여러 가지라 GP로 환산하지 않습니다.</span>");
+  $("#prayerNote").innerHTML = parts.join("<br>");
+  $("#prHint").textContent = (M.prayers.map(function (p) { return p.n; }).join(", ") || "기도 없음") + (M.potion ? " · " + M.potion.n : "");
+}
 
 function renderLevels() {
   var el = $("#levels"); el.innerHTML = "";
@@ -783,13 +937,14 @@ function renderStats() {
   var items = [
     ["전투 레벨", P.combatLevel, P0.combatLevel, 0],
     ["최대 HP", P.maxHp, P0.maxHp, 0],
-    ["최대 타격", P.maxHitBase, P0.maxHitBase, 0, "삼각형/원소 보정 전"],
+    ["최대 타격", Math.floor(P.maxHitBase * (1 + P.mods.pctMaxHit)), Math.floor(P0.maxHitBase * (1 + P0.mods.pctMaxHit)), 0, "기도·물약 포함, 상성/원소 전"],
     ["명중 레이팅", P.accuracy, P0.accuracy, 0],
     ["공격 간격", P.interval / 1000, P0.interval / 1000, 1, "초", true],
     ["Power", P.pow, P0.pow, 0], ["Protection", P.prot, P0.prot, 0],
     ["Light", P.light, P0.light, 0],
     ["자동식사 임계", P.threshHp, P0.threshHp, 0, "HP"],
-    ["이론 DPS", P.maxHitBase / 2 / (P.interval / 1000), P0.maxHitBase / 2 / (P0.interval / 1000), 1, "명중 100% 가정"]
+    ["치명타", P.mods.critCh * 100, P0.mods.critCh * 100, 0, "% · ×" + P.mods.critMult.toFixed(2)],
+    ["이론 DPS", P.maxHitBase * (1 + P.mods.pctMaxHit) / 2 / (P.interval / 1000), P0.maxHitBase * (1 + P0.mods.pctMaxHit) / 2 / (P0.interval / 1000), 1, "명중 100% 가정"]
   ];
   items.forEach(function (it) {
     var d = document.createElement("div"); d.className = "stat"; var v = it[1], v0 = it[2], dec = it[3], lowerBetter = it[5];
@@ -859,7 +1014,7 @@ var COLS = [
   { k: "hpXpH", l: "HP XP/h", f: function (r) { return fmt(r.hpXpH, 0); } },
   { k: "foodH", l: "음식/h", f: function (r) { return fmt(r.foodH, 1) + delta(r, "foodH", 1, true); } },
   { k: "xpPerFood", l: "XP/음식", f: function (r) { return r.xpPerFood == null ? "∞" : fmt(r.xpPerFood, 0); }, s: function (r) { return r.xpPerFood == null ? 1e12 : r.xpPerFood; } },
-  { k: "netGpH", l: "창고가치/h", f: function (r) { return gpf(r.netGpH) + delta(r, "netGpH", 0); }, title: function (r) { return "드롭 아이템 " + fmt(r.lootGpH, 0) + " + GP " + fmt(r.dropGpH, 0) + (r.rewardGpH ? " + 던전 보상 " + fmt(r.rewardGpH, 0) : "") + " − 탄약 " + fmt(r.ammoCostH, 0) + " − 룬 " + fmt(r.runeCostH, 0) + " − 음식 " + fmt(r.foodCostH, 0) + " (은행 판매가 기준)"; } },
+  { k: "netGpH", l: "창고가치/h", f: function (r) { return gpf(r.netGpH) + delta(r, "netGpH", 0); }, title: function (r) { return "드롭 아이템 " + fmt(r.lootGpH, 0) + " + GP " + fmt(r.dropGpH, 0) + (r.rewardGpH ? " + 던전 보상 " + fmt(r.rewardGpH, 0) : "") + " − 탄약 " + fmt(r.ammoCostH, 0) + " − 룬 " + fmt(r.runeCostH, 0) + " − 음식 " + fmt(r.foodCostH, 0) + (r.potionCostH ? " − 물약 " + fmt(r.potionCostH, 0) : "") + " (은행 판매가 기준)"; } },
   { k: "pHit", l: "내 명중", f: function (r) { return pct(r.pHit); } },
   { k: "eHit", l: "적 명중", f: function (r) { return pct(r.eHit); } },
   { k: "burst", l: "적 최대폭발", f: function (r) { return r.burst + "<span class=sub>/ " + (lastRunCfg ? Math.round(Engine.buildPlayer(B, lastRunCfg).threshHp) : "") + "</span>"; }, title: function () { return "한 번의 공격 행동으로 받을 수 있는 최대 피해 / 자동식사 임계 HP"; } },
@@ -965,13 +1120,17 @@ function renderDetail(id) {
     + "<div>전투 XP / 시간</div><div><b>" + fmt(r.combatXpH, 0) + "</b></div><div>HP XP / 시간</div><div>" + fmt(r.hpXpH, 0) + "</div>"
     + "<div>킬 / 시간</div><div>" + fmt(r.killsH, 1) + (r.kind === "dungeon" ? " (완주 " + fmt(r.loopsH, 1) + ")" : "") + "</div><div>평균 전투 시간</div><div>" + fmt(r.avgFightS, 1) + "초</div>"
     + "<div>음식 / 시간</div><div><b>" + fmt(r.foodH, 1) + "</b>개 (" + esc(B.items[Pr.food] ? B.items[Pr.food].n : "") + ")</div><div>XP / 음식 1개</div><div>" + (r.xpPerFood == null ? "∞" : fmt(r.xpPerFood, 0)) + "</div>"
-    + "<div>받은 피해 / 시간</div><div>" + fmt(r.dmgTakenH, 0) + "</div><div>사망 / 시간</div><div class='" + (r.deathsH > 0 ? "crit" : "") + "'>" + fmt(r.deathsH, 2) + "</div></div>"
+    + "<div>받은 피해 / 시간</div><div>" + fmt(r.dmgTakenH, 0) + "</div><div>사망 / 시간</div><div class='" + (r.deathsH > 0 ? "crit" : "") + "'>" + fmt(r.deathsH, 2) + "</div>"
+    + (Pr.mods.prayers.length ? "<div>기도 포인트 / 시간</div><div><b>" + fmt(r.prayerPtsH, 0) + "</b>pt" + (r.prayerPtsH > 0 ? " (보유 " + (B.player.prayerPoints || 0).toLocaleString() + "pt → " + fmt((B.player.prayerPoints || 0) / r.prayerPtsH, 1) + "시간)" : "") + "</div>" : "")
+    + (Pr.mods.potion && r.potionH > 0 ? "<div>물약 / 시간</div><div>" + fmt(r.potionH, 0) + "개 (보유 " + potionQty(Pr.mods.potion.id).toLocaleString() + "개 → " + fmt(potionQty(Pr.mods.potion.id) / r.potionH, 1) + "시간)</div>" : "")
+    + "</div>"
     + "<h3>창고 가치 / 시간 (은행 판매가 기준)</h3><div class=kv>"
     + "<div>드롭 아이템</div><div>+" + fmt(r.lootGpH, 0) + "</div><div>GP 드롭</div><div>+" + fmt(r.dropGpH, 0) + "</div>"
     + (r.kind === "dungeon" ? "<div>던전 완주 보상</div><div>+" + fmt(r.rewardGpH, 0) + "</div>" : "")
     + "<div>탄약 소모</div><div>" + (Pr.econ.ammoId ? "−" + fmt(r.ammoCostH, 0) + " (" + fmt(r.attacksH * (1 - Pr.econ.ammoPres), 0) + "발 " + esc(Engine.nameOf(B, Pr.econ.ammoId)) + " × " + fmt(Pr.econ.ammoPrice, 0) + ")" : "<span class=muted>없음</span>") + "</div>"
     + "<div>룬 소모</div><div>" + (Pr.econ.runes.length ? "−" + fmt(r.runeCostH, 0) + " (공격당 " + Pr.econ.runes.map(function (x) { return esc(Engine.nameOf(B, x[0])) + " " + x[1]; }).join(", ") + ", " + fmt(r.attacksH, 0) + "회/h)" : "<span class=muted>없음</span>") + "</div>"
     + "<div>음식 소모</div><div>−" + fmt(r.foodCostH, 0) + " (" + fmt(r.foodH, 1) + "개 × " + fmt(Pr.econ.foodPrice, 0) + ")</div>"
+    + "<div>물약 소모</div><div>" + (Pr.mods.potion ? "−" + fmt(r.potionCostH, 0) + " (" + fmt(r.potionH, 0) + "개 " + esc(Pr.mods.potion.n) + " × " + fmt(Pr.mods.potion.price, 0) + ")" : "<span class=muted>없음</span>") + "</div>"
     + "<div><b>순 증감</b></div><div>" + gpf(r.netGpH) + "</div></div>"
     + (r.topDrops && r.topDrops.length ? "<div class=note>주요 드롭 (기대값): " + r.topDrops.slice(0, 6).map(function (x) { return esc(x.n) + " " + fmt(x.qtyH, 1) + "/h = " + fmt(x.gpH, 0); }).join(" · ") + "</div>" : "")
     + "<div class=note>드롭은 테이블 확률·가중치의 기대값입니다. 장비의 드롭/GP 2배·탄약/룬 보존 효과, 상자 개봉 가치, 슬레이어 코인은 미반영입니다.</div>"
@@ -979,7 +1138,7 @@ function renderDetail(id) {
     + "<div class=note>" + (r.safe ? "한 번의 공격 행동으로 임계 HP를 넘기지 못하므로 자동식사만으로 사망하지 않습니다." : "한 번의 공격이 임계 HP를 넘길 수 있어 연속 피격 시 사망할 수 있습니다. 임계 %를 올리거나 HP/Protection을 올리세요.") + "</div>"
     + "<h3>전투 수치 (" + (r.kind === "dungeon" ? "마지막 적 기준" : "") + ")</h3><div class=kv>"
     + "<div>내 명중률</div><div>" + pct(r.pHit) + "</div><div>적 명중률</div><div>" + pct(r.eHit) + "</div>"
-    + "<div>내 최대타 (삼각형·원소 적용)</div><div>" + r.pMaxhit + "</div><div>적 저항 (내 공격 감소)</div><div>" + pct(r.eRes) + "</div><div>내 저항 (적 공격 감소)</div><div>" + pct(r.pRes) + "</div></div>"
+    + "<div>내 최대타 (삼각형·원소 적용)</div><div>" + r.pMaxhit + (r.pMinhit > 1 ? " (최소 " + r.pMinhit + ")" : "") + "</div><div>적 저항 (내 공격 감소)</div><div>" + pct(r.eRes) + "</div><div>내 저항 (적 공격 감소)</div><div>" + pct(r.pRes) + "</div></div>"
     + "<h3>적 (" + seq.length + ")</h3><div class=enemy-seq>" + enemyHtml + "</div>"
     + (specials.length ? "<h3>특수 공격</h3><div class=note>" + specials.join("<br>") + "</div>" : "")
     + "<h3>XP 상세 / 시간</h3><div class=kv>" + xpHtml + "</div>"

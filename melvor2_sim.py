@@ -259,6 +259,7 @@ def parse_save(raw, gd=None):
     pm = re.search(rb"\x06Player(....)\x04\x00\x00\x00(....)", raw, re.S)
     info["current_hp"] = struct.unpack("<i", pm.group(2))[0] if pm else None
     info.update(parse_skilling(raw))
+    info["prayers"] = parse_prayers(raw)
     info["astro"] = parse_astrology(raw, gd) if gd is not None else {}
     return info
 
@@ -325,6 +326,51 @@ def max_hit(gd, style, levels, stats):
     M = stats.get(short(f["Data"]["MaxHitStat"]), 0); D = stats.get(short(f["Data"]["DamageBonusStat"]), 0)
     return max(1, math.floor(M * (1 + D) * (1 + (L + 1) / 200)))
 
+def player_combat_mods(gd, prayer_ids, potion_id, style):
+    """Prayers + combat potion -> aggregated modifiers (same rules as the app's combatMods)."""
+    r = dict(stats=defaultdict(float), pow=0, prot=0, pct_maxhit=0.0, min_pct=0.0, flat_min=0.0, crit_ch=0.0, crit_mult=0.0, acc_pct=0.0,
+             eva_pct=0.0, int_pct=0.0, int_flat=0.0, light=0, hit_flat=0.0, ward_dbl=0.0, avoid=defaultdict(float), enemy_armour=0.0,
+             enemy_ward=0.0, cost_flat=0, cost_pres=0.0, prayers=[], potion=None, other=[])
+    def apply(m, src):
+        if m.get("cond"): r["other"].append(f"{src}: {m['s']} ({m['cond']})"); return
+        if m.get("style") and m["style"] != style: return
+        if m.get("dt") and m["dt"] != "Normal": return
+        s_, v = m["s"], m["v"]
+        if m["who"] == "Enemy":
+            if s_ == "FlatCombatStatValue" and m.get("cs") == "Armour": r["enemy_armour"] += v
+            elif s_ == "FlatCombatStatValue" and m.get("cs") == "MaximumWard": r["enemy_ward"] += v
+            else: r["other"].append(f"{src}: enemy {s_}")
+            return
+        key = {"PercentMaxHit": "pct_maxhit", "FlatPowerRating": "pow", "FlatProtectionRating": "prot", "PercentAccuracyRating": "acc_pct",
+               "PercentEvasionRating": "eva_pct", "PercentAttackInterval": "int_pct", "FlatAttackInterval": "int_flat",
+               "MinHitBasedOnMaxHit": "min_pct", "FlatMinHit": "flat_min", "FlatCriticalHitChance": "crit_ch",
+               "FlatCriticalHitMultiplier": "crit_mult", "FlatLight": "light", "DoubleWardDamageChance": "ward_dbl"}
+        if m["t"] == "Character" and s_ == "FlatCombatStatValue" and m.get("cs"): r["stats"][m["cs"]] += v
+        elif m["t"] == "Character" and s_ in key: r[key[s_]] += v
+        elif m["t"] == "Target" and s_ == "FlatHitChance": r["hit_flat"] += v
+        elif m["t"] == "CombatEffect" and s_ == "AvoidanceChance" and m.get("eff"): r["avoid"][m["eff"]] += v
+        elif m["t"] == "Prayer" and s_ == "FlatPrayerCost": r["cost_flat"] += v
+        elif m["t"] == "Prayer" and s_ == "CostPreservationChance": r["cost_pres"] += v
+        else: r["other"].append(f"{src}: {s_}")
+    pr = {p["Id"]: p for p in gd_objects(gd)["Prayer"]}
+    for pid in dict.fromkeys(prayer_ids):
+        p = pr.get(pid)
+        if not p: continue
+        for m in combat_mods(p["Bonuses"]): apply(m, p["DisplayName"])
+        on = short(((p.get("ConsumesOn") or {}).get("Data") or {}).get("Character", {}).get("Component") or "Player")
+        r["prayers"].append(dict(id=pid, cost=p["Cost"]["Quantity"], on=on))
+    it = gd.items.get(potion_id) if potion_id else None
+    tb = it and it["Capabilities"].get("Toolbelt")
+    if tb and short(tb["FitsInSlot"]) == "CombatPotion":
+        for m in combat_mods(tb["Bonuses"]): apply(m, _name(it["DisplayName"]))
+        conds = {short(cc["Type"]) for c in tb.get("ConsumesOn") or [] for cc in ((c.get("Data") or {}).get("Conditions") or [])}
+        r["potion"] = dict(id=potion_id, never="FightingSlayerTask" in conds or ("PrayerActive" in conds and not r["prayers"]),
+                           need_ward="CharacterHasWard" in conds)
+    r["cost_player"] = sum(max(int(p["cost"] + r["cost_flat"]), 1) for p in r["prayers"] if p["on"] != "Enemy")
+    r["cost_enemy"] = sum(max(int(p["cost"] + r["cost_flat"]), 1) for p in r["prayers"] if p["on"] == "Enemy")
+    r["crit_ch"] = min(1.0, max(0.0, r["crit_ch"])); r["crit_mult"] = max(1.5 + r["crit_mult"], 1.0)
+    return r
+
 class Player:
     def __init__(self, gd, save, args):
         self.gd = gd
@@ -354,14 +400,20 @@ class Player:
             self.stance = allowed[0]
         st = gd.stances[self.stance]
         self.style = style_of_stance(gd, self.stance)
+        prayer_ids = [x for x in (args.prayers.split(",") if getattr(args, "prayers", None) is not None else (save.get("prayers") or {}).values()) if x]
+        potion_id = getattr(args, "potion", None)
+        if potion_id is None: potion_id = (save.get("toolbelt", {}).get("CombatPotion") or [None])[0]
+        self.mods = M = player_combat_mods(gd, prayer_ids, potion_id or None, self.style)
+        for k, v in M["stats"].items(): self.stats[k] += v
+        self.power += M["pow"]; self.protection += M["prot"]
         self.xp_rates = {short(g["Component"]["Entity"]): g["ExperiencePerDamage"] for g in st["ExperienceGain"]}
         self.def_bonus_levels = sum(b["Value"] for b in st["Bonuses"]["Component"] if b["Stat"]["Name"] == "FlatCombatLevel")
         lv = dict(self.levels); lv["Defence"] = lv.get("Defence", 1) + self.def_bonus_levels
         self.eff_levels = lv
-        self.interval = max(250, int(self.stats.get("AttackInterval", 4000) or 4000))
+        self.interval = max(250, math.floor(int(self.stats.get("AttackInterval", 4000) or 4000) * (1 + M["int_pct"]) + M["int_flat"]))
         self.max_hp = self.levels["Hitpoints"] * 10
         self.max_hit_base = max_hit(gd, self.style, self.levels, self.stats)
-        self.accuracy = rating(accuracy_level(gd, self.style, self.levels), self.stats.get(short(st["AccuracyStat"]), 0))
+        self.accuracy = math.floor(rating(accuracy_level(gd, self.style, self.levels), self.stats.get(short(st["AccuracyStat"]), 0)) * (1 + M["acc_pct"]))
         # food
         food_name = args.food or (save["food"][0] if save["food"] else None)
         if not food_name or "Food" not in gd.items.get(food_name, {}).get("Capabilities", {}):
@@ -369,13 +421,13 @@ class Player:
         self.food = food_name; self.food_heal = gd.items[food_name]["Capabilities"]["Food"]["BaseHealing"]
         self.food_qty = save["food"][1] if save["food"] and save["food"][0] == food_name else save["bank"].get(food_name, 0)
         self.ae_threshold = args.autoeat_threshold; self.ae_eff = args.autoeat_efficiency
-        self.light = args.light
+        self.light = args.light + M["light"]
         self.combat_level = math.floor(sum(self.levels.get(short(r["Level"]), 1) * r["Ratio"] for r in gd.styles[self.style]["CombatLevelRatios"]))
 
     def evasion_vs(self, enemy_stance, enemy_style):
         est = self.gd.stances[enemy_stance]
         lvl = evasion_level(self.gd, enemy_style, self.eff_levels)
-        return rating(lvl, self.stats.get(short(est["EvasionStat"]), 0))
+        return math.floor(rating(lvl, self.stats.get(short(est["EvasionStat"]), 0)) * (1 + self.mods["eva_pct"]))
 
 class Enemy:
     def __init__(self, gd, e):
@@ -455,7 +507,8 @@ class Sim:
     def run(self):
         gd, p, rng = self.gd, self.p, self.rng
         dark_factor = max(0.0, 1 - 0.05 * max(0, self.darkness - p.light))
-        res = dict(kills=0, deaths=0, food=0, healed=0, dmg_taken=0, dmg_dealt=0, xp=defaultdict(float),
+        M = p.mods
+        res = dict(p_turns=0, potions=0, kills=0, deaths=0, food=0, healed=0, dmg_taken=0, dmg_dealt=0, xp=defaultdict(float),
                    player_attacks=0, player_hits=0, enemy_attacks=0, enemy_hits=0, loops=0, fight_ms=0)
         self.hp = p.max_hp; t = 0; idx = 0
         thresh_hp = round(p.max_hp * p.ae_threshold)  # FoodComponent.AutoEat uses Math.Round
@@ -465,12 +518,16 @@ class Sim:
             e = self.sequence[i % len(self.sequence)]
             tri_mh, tri_res = gd.triangle_mods(p.style, e.style)
             el = gd.element_mod(p.elements, e.element)
-            p_maxhit = max(1, math.floor(p.max_hit_base * tri_mh * el))
+            # MaxHit = floor((base * (1 + PercentMaxHit)) * (1 + triangle)); elemental bonuses are PercentMaxHit modifiers
+            p_maxhit = max(1, math.floor(p.max_hit_base * (1 + M["pct_maxhit"] + el - 1) * tri_mh))
+            p_minhit = min(p_maxhit, max(1, math.floor(1 + M["flat_min"] + p_maxhit * M["min_pct"])))
+            mw = max(0, int(e.max_ward + M["enemy_ward"]))
             e_res = min(0.70, e.protection / (p.power + e.protection) if (p.power + e.protection) > 0 else 0)
             p_res = min(0.70, (p.protection / (e.power + p.protection) if (e.power + p.protection) > 0 else 0) * tri_res)
-            p_hit = hit_chance(p.accuracy * dark_factor, e.evasion_vs(p.stance, p.style))
+            p_hit = min(1.0, max(0.0, hit_chance(p.accuracy * dark_factor, e.evasion_vs(p.stance, p.style)) + M["hit_flat"]))
             e_hit = hit_chance(e.accuracy, p.evasion_vs(e.stance, e.style) * dark_factor)
-            return dict(e=e, hp=e.max_hp, ward=e.max_ward, armour_broken=False, p_maxhit=p_maxhit, e_res=e_res, p_res=p_res,
+            return dict(e=e, hp=e.max_hp, ward=mw, max_ward=mw, armour=max(0, round(e.armour + M["enemy_armour"])), armour_broken=False,
+                        p_maxhit=p_maxhit, p_minhit=p_minhit, e_res=e_res, p_res=p_res,
                         p_hit=p_hit, e_hit=e_hit, start=start)
 
         f = spawn(0, 0); p_next = p.interval; e_next = f["e"].interval
@@ -511,18 +568,23 @@ class Sim:
             if p_next <= e_next:
                 # ---- player attack ----
                 p_next += p.interval
+                res["p_turns"] += 1
+                pot = M["potion"]
+                if pot and not pot["never"] and (not pot["need_ward"] or f["ward"] > 0): res["potions"] += 1
                 if stunned > 0:
                     stunned -= 1; continue
                 res["player_attacks"] += 1
                 if rng.random() < f["p_hit"]:
                     res["player_hits"] += 1
-                    dmg = rng.randint(1, f["p_maxhit"])
+                    dmg = rng.randint(f["p_minhit"], f["p_maxhit"])
+                    if M["crit_ch"] and rng.random() < M["crit_ch"]: dmg = int(dmg * M["crit_mult"])
                     dmg = math.floor(dmg * (1 - f["e_res"]))
                     if f["ward"] > 0:
-                        dmg = math.floor(dmg * (1 - f["ward"] / e.max_ward)); f["ward"] -= 1
-                    if e.armour and not f["armour_broken"]:
-                        dmg -= e.armour
-                        if dmg >= e.armour: f["armour_broken"] = True
+                        dmg = math.floor(dmg * (1 - f["ward"] / f["max_ward"]))
+                        f["ward"] = max(0, f["ward"] - (2 if M["ward_dbl"] and rng.random() < M["ward_dbl"] else 1))
+                    if f["armour"] and not f["armour_broken"]:
+                        dmg -= f["armour"]
+                        if dmg >= f["armour"]: f["armour_broken"] = True
                     dmg = max(1, dmg)
                     dealt = min(dmg, f["hp"]); f["hp"] -= dmg; res["dmg_dealt"] += dealt
                     for skill, rate in p.xp_rates.items(): res["xp"][skill] += dealt * rate
@@ -556,7 +618,7 @@ class Sim:
                     died = take_damage(dmg)
                     if e.lifesteal: f["hp"] = min(e.max_hp, f["hp"] + math.floor(dmg * e.lifesteal))
                     for ch, dot in e.onhit_dots:
-                        if not died and rng.random() < ch:
+                        if not died and rng.random() < ch and not (M["avoid"].get(dot["Id"]) and rng.random() < M["avoid"][dot["Id"]]):
                             dots.append([t + dot["ProcInterval"], dot["ProcCount"], max(1, math.floor(e.max_hit * dot["DamagePerProc"]["Formula"]["Data"]["Percent"])), dot["ProcInterval"]])
             else:
                 landed = False
@@ -579,7 +641,8 @@ class Sim:
                 if landed and not died:
                     for eff in special["OnHitEffects"]:
                         if eff.get("AppliesTo") != "Target" or rng.random() >= eff["Chance"]: continue
-                        et = short(eff["Effect"]["Type"])
+                        et = short(eff["Effect"]["Type"]); eid = short(eff["Effect"]["Data"]["Effect"])
+                        if M["avoid"].get(eid) and rng.random() < M["avoid"][eid]: continue
                         if et == "DamageOverTime":
                             dot = gd.dots[short(eff["Effect"]["Data"]["Effect"])]
                             dots.append([t + dot["ProcInterval"], dot["ProcCount"], max(1, math.floor(e.max_hit * dot["DamagePerProc"]["Formula"]["Data"]["Percent"])), dot["ProcInterval"]])
@@ -601,7 +664,9 @@ class Sim:
                     xp_h={k: v / hours for k, v in res["xp"].items()},
                     p_hit=info["p_hit"], e_hit=info["e_hit"], p_maxhit=info["p_maxhit"], e_res=info["e_res"], p_res=info["p_res"],
                     avg_fight_s=(res["fight_ms"] / res["kills"] / 1000) if res["kills"] else None,
-                    kills=res["kills"], deaths=res["deaths"])
+                    kills=res["kills"], deaths=res["deaths"],
+                    prayer_pts_h=(res["player_attacks"] * M["cost_player"] + res["enemy_attacks"] * M["cost_enemy"]) / hours * (1 - min(1.0, M["cost_pres"])),
+                    potions_h=res["potions"] / hours)
 
 # ----------------------------------------------------------------------------
 # 5. Reporting
@@ -680,10 +745,10 @@ def export_attack(gd, atk):
         if et == "DamageOverTime" and eff.get("AppliesTo") == "Target":
             dot = gd.dots[short(eff["Effect"]["Data"]["Effect"])]
             onhit.append(dict(kind="dot", ch=eff["Chance"], interval=dot["ProcInterval"], count=dot["ProcCount"],
-                              pct=dot["DamagePerProc"]["Formula"]["Data"]["Percent"], name=dot["DisplayName"]))
+                              pct=dot["DamagePerProc"]["Formula"]["Data"]["Percent"], name=dot["DisplayName"], eff=dot["Id"]))
         elif et == "Stun" and eff.get("AppliesTo") == "Target":
             st = gd.stuns.get(short(eff["Effect"]["Data"]["Effect"])) or {}
-            onhit.append(dict(kind="stun", ch=eff["Chance"], turns=st.get("DefaultTurns", 1) or 1))
+            onhit.append(dict(kind="stun", ch=eff["Chance"], turns=st.get("DefaultTurns", 1) or 1, eff=st.get("Id", "Stun")))
         else:
             unmodeled.append(f"{atk['DisplayName']}({et})")
     return dict(name=atk["DisplayName"], avoidable=atk["IsAvoidable"], hits=hits, onhit=onhit, unmodeled=sorted(set(unmodeled)))
@@ -704,7 +769,7 @@ def export_enemy(gd, en):
                 element=e.element, maxHp=e.max_hp, interval=e.interval, armour=e.armour, maxWard=e.max_ward, lifesteal=e.lifesteal,
                 maxHit=e.max_hit, accuracy=e.accuracy, specials=specials, specialTotal=e.special_total, killXp=e.kill_xp_factor,
                 cl=e.combat_level, eotHeal=e.eot_heal_pct, drops=_drops(en.get("Drops")),
-                onhitDots=[dict(ch=ch, interval=d["ProcInterval"], count=d["ProcCount"], pct=d["DamagePerProc"]["Formula"]["Data"]["Percent"], name=d["DisplayName"]) for ch, d in e.onhit_dots],
+                onhitDots=[dict(ch=ch, interval=d["ProcInterval"], count=d["ProcCount"], pct=d["DamagePerProc"]["Formula"]["Data"]["Percent"], name=d["DisplayName"], eff=d["Id"]) for ch, d in e.onhit_dots],
                 unmodeled=e.unmodeled)
 
 def export_bundle(gd, save, save_path):
@@ -794,11 +859,13 @@ def export_bundle(gd, save, save_path):
     levels.setdefault("Hitpoints", 10)
     player = dict(name=save["name"], levels=levels, equipment={s: list(v) for s, v in save["equipment"].items()},
                   food=list(save["food"]) if save["food"] else None, stanceMap=save["stance_map"], currentHp=save["current_hp"],
-                  bank={k: v for k, v in save["bank"].items() if k in items}, bankAll=save["bank"])
+                  bank={k: v for k, v in save["bank"].items() if k in items}, bankAll=save["bank"],
+                  prayers=save.get("prayers") or {}, prayerPoints=save.get("prayer_points", 0),
+                  potion=list(save["toolbelt"]["CombatPotion"]) if save.get("toolbelt", {}).get("CombatPotion") else None)
     return dict(generatedAt=time.strftime("%Y-%m-%d %H:%M"), version=VERSION, saveFile=os.path.basename(save_path), saveVersion=save["version"],
                 player=player, slots=slots, items=items, stances=stances, styles=styles, weaponTypes=weapon_types, spells=spells,
                 triangle=triangle, elemental=elemental, enemies=enemies, targets=targets, respawnMs=RESPAWN_MS, xpTable=XP_TABLE,
-                profit=export_profit(gd, save))
+                profit=export_profit(gd, save), **export_prayers(gd))
 
 # ----------------------------------------------------------------------------
 # 7. Skilling / profitability export (수익성 계산기)
@@ -816,7 +883,7 @@ SKILLING_GLOBAL_GROUPS = {"GlobalPercentActionInterval", "GlobalFlatActionInterv
 
 def parse_skilling(raw):
     """Toolbelt / pets / shop purchases / mastery-guild tasks / wallet / bonfire from the decoded save."""
-    out = dict(toolbelt={}, pets=[], shop={}, guild_tasks={}, gp=0, bonfire=None, skill_food={})
+    out = dict(toolbelt={}, pets=[], shop={}, guild_tasks={}, gp=0, prayer_points=0, bonfire=None, skill_food={})
     def is_id(p): return raw[p + 1:p + 12] == b"MelvorBase:"
     # skill entities: [len][MelvorBase:Skill][i32 section len][i32 components] ... "\x04Food"[i32 len][u8 has][item][i64 qty]
     ents = []
@@ -888,6 +955,7 @@ def parse_skilling(raw):
             for _ in range(min(n, 8)):
                 q = rr.i64(); cur = short(rr.str())
                 if cur == "GoldPieces": out["gp"] = q
+                elif cur == "PrayerPoints": out["prayer_points"] = q
         except Exception: pass
     i = raw.find(b"\x07Bonfire")
     if i >= 0:
@@ -897,6 +965,26 @@ def parse_skilling(raw):
             if k > 0:
                 rr = Reader(raw, k - 1); bid = short(rr.str()); out["bonfire"] = dict(id=bid, active=bool(rr.u8()))
         except Exception: pass
+    return out
+
+def parse_prayers(raw):
+    """Selected prayer per slot. "\x06Prayer"[i32 len][i32 n] then per slot <slot id><i32 len>
+    [bool selected][prayer id][bool activated][i32 state][prayer id] (ActivePrayerSlot.WriteTo). The game re-activates
+    the selected prayer on load, so the selected one is what is active in combat."""
+    out = {}
+    for m in re.finditer(rb"\x06Prayer", raw):
+        try:
+            rr = Reader(raw, m.end()); ln = rr.i32(); end = rr.p + ln; n = rr.i32()
+            if n < 1 or n > 8 or raw[rr.p + 1:rr.p + 12] != b"MelvorBase:": continue
+            slots = {}
+            for _ in range(n):
+                sid = short(rr.str()); sl = rr.i32(); send = rr.p + sl
+                if rr.u8(): slots[sid] = short(rr.str())
+                rr.p = send
+            if rr.p <= end and slots is not None:
+                out = slots; break
+        except Exception:
+            pass
     return out
 
 def parse_astrology(raw, gd):
@@ -980,6 +1068,60 @@ def _bon_list(bon, types=None):
         out.append(e)
     return out
 
+COMBAT_MOD_TYPES = {"Character", "Target", "CombatEffect", "Prayer", "AmmoConsumption", "MagicSpell", "CombatAction"}
+
+def combat_mods(bon):
+    """Prayer / combat-potion Bonuses -> [{t, s, v, who, style?, cs?, dt?, eff?, cond?}] (who = Player/Enemy/...)."""
+    out = []
+    for b in (bon or {}).get("Component") or []:
+        t = short(b["Stat"]["StatsType"])
+        if t not in COMBAT_MOD_TYPES: continue
+        lc = b.get("LocalContext") or {}
+        e = dict(t=t, s=b["Stat"]["Name"], v=b["Value"], who=short((lc.get("Component") or {}).get("Component") or ""))
+        for k, kk in (("CombatStyle", "style"), ("CombatStat", "cs"), ("DamageType", "dt"), ("Effect", "eff"), ("Element", "el")):
+            if lc.get(k): e[kk] = short(lc[k])
+        if b.get("Condition"): e["cond"] = short(b["Condition"]["Type"])
+        if b.get("Scaling"): e["cond"] = "Scaling"
+        out.append(e)
+    return out
+
+def _combat_effect_names(bon):
+    return [short(ce["Modifier"]["Effect"]["Type"]) for ce in (bon or {}).get("CombatEffect") or [] if ce.get("Chance", 1)]
+
+def _prayer_level(reqs):
+    lv, other = 1, []
+    for r in reqs or []:
+        d = r.get("Data") or {}
+        if short(r["Type"]) == "Level" and short((d.get("Component") or {}).get("Entity")) == "Prayer": lv = max(lv, d["Level"])
+        elif short(r["Type"]) == "Level": other.append(f"{short(d['Component']['Entity'])} {d['Level']}")
+        else: other.append(short(r["Type"]))
+    return lv, other
+
+def export_prayers(gd):
+    O = gd_objects(gd)
+    slots = []
+    for s in O["PrayerSlot"]:
+        lv, other = _prayer_level(s.get("UnlockRequirements"))
+        slots.append(dict(id=s["Id"], type=short(s["FitsType"]), lv=lv))
+    prayers = []
+    for p in O["Prayer"]:
+        lv, other = _prayer_level(p.get("UnlockRequirements"))
+        co = p.get("ConsumesOn") or {}
+        prayers.append(dict(id=p["Id"], n=p["DisplayName"], type=short(p["FitsInSlot"]), lv=lv, req=other,
+                            cost=p["Cost"]["Quantity"], cur=short(p["Cost"]["Currency"]),
+                            on=short(((co.get("Data") or {}).get("Character") or {}).get("Component") or "Player"),
+                            mods=combat_mods(p["Bonuses"]), fx=_combat_effect_names(p["Bonuses"])))
+    potions = []
+    for it in O["Item"]:
+        tb = it["Capabilities"].get("Toolbelt")
+        if not tb or short(tb["FitsInSlot"]) != "CombatPotion": continue
+        conds = []
+        for c in tb.get("ConsumesOn") or []:
+            for cc in ((c.get("Data") or {}).get("Conditions") or []): conds.append(short(cc["Type"]))
+        potions.append(dict(id=it["Id"], n=_name(it["DisplayName"]), mods=combat_mods(tb["Bonuses"]), fx=_combat_effect_names(tb["Bonuses"]),
+                            consumeIf=sorted(set(conds)), sell=(it.get("SellsFor") or {}).get("Quantity", 0)))
+    return dict(prayerSlots=slots, prayers=prayers, potions=potions)
+
 def _iq(x):  # ItemQuantity / ItemQuantityChance -> compact
     d = dict(item=short(x["Item"]), qty=x.get("Quantity", 1))
     if "Chance" in x: d["ch"] = x["Chance"]
@@ -1033,12 +1175,16 @@ def export_profit(gd, save):
         if eq:
             eb = _bon_list(eq.get("Bonuses"))
             if eb: o["eq"] = eb
+        op = cap.get("Openable")
+        if op and op.get("AlwaysDrops") and not op.get("DropTable"):  # fixed contents (Seaweed Clump -> 100 Seaweed): profit tab opens it
+            o["open"] = [[short(x["Item"]), x["Quantity"]] for x in op["AlwaysDrops"]]
         fd = cap.get("Food")
-        if fd and isinstance(fd.get("Bonuses"), dict) and fd["Bonuses"].get("Component"):
-            o["fd"] = dict(sk=short(fd["Bonuses"]["Component"]["Entity"]), heal=fd["BaseHealing"], bon=_bon_list(fd["Bonuses"]))
+        if fd:  # every food can sit in a skill food slot; bonuses only apply in the skill named by its Component
+            comp = fd["Bonuses"].get("Component") if isinstance(fd.get("Bonuses"), dict) else None
+            o["fd"] = dict(sk=short(comp["Entity"]) if comp else None, heal=fd.get("BaseHealing", 0), bon=_bon_list(fd["Bonuses"]) if comp else [])
         if it.get("Description"): o["d"] = re.sub(r"\[.*?\]", "", it["Description"])[:160]
         items[it["Id"]] = o
-    food_skills = {o["fd"]["sk"] for o in items.values() if "fd" in o}
+    food_skills = {o["fd"]["sk"] for o in items.values() if "fd" in o and o["fd"]["sk"]}
     # --- category display names
     cat_names = {}
     for key in ("RecipeCategory", "RecipeSubcategory", "WoodcuttingRecipeCategory", "MiningRecipeCategory", "FishingLocation",
@@ -1228,7 +1374,8 @@ def export_profit(gd, save):
         if sk: tb.setdefault(sk, {})[slot] = v
     bank_value = sum(q * items[k]["sell"] for k, q in save["bank"].items() if k in items)
     psave = dict(toolbelt=tb, pets=save["pets"], shop=save["shop"], bonfire=save["bonfire"], gp=save["gp"], bankValue=bank_value,
-                 astro=save.get("astro") or {}, skillFood={k: v[0] for k, v in (save.get("skill_food") or {}).items()})
+                 astro=save.get("astro") or {}, skillFood={k: v[0] for k, v in (save.get("skill_food") or {}).items()},
+                 skillFoodQty={k: v[1] for k, v in (save.get("skill_food") or {}).items()})
     # alternative reward modes (Sacrificial Anvil): per-recipe toggle in the game; the sim offers it per skill/category.
     # Per completion: one roll decides xp×mult / sale×mult (weights), every Step rolls the collectable weight;
     # products are converted to their SellsFor GP (×sale mult) instead of entering the bank.
@@ -1264,7 +1411,7 @@ def write_app(gd, save, save_path):
 
 # ----------------------------------------------------------------------------
 # Self-update (GitHub Releases)
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 UPDATE_REPO = "tgYun783/melvor2-simulator"
 RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
 EXE_NAME = "Melvor2Simulator.exe"
@@ -1484,6 +1631,8 @@ def main():
     ap.add_argument("--autoeat-threshold", type=float, default=0.25, help="auto-eat HP fraction (default 0.25)")
     ap.add_argument("--autoeat-efficiency", type=float, default=1.0, help="healing multiplier for auto-eat (default 1.0)")
     ap.add_argument("--light", type=int, default=0, help="player Light stat for dark areas")
+    ap.add_argument("--prayers", help="comma-separated prayer ids, e.g. Guard,Will (default: the save's selected prayers; '' for none)")
+    ap.add_argument("--potion", help="combat potion item id, e.g. MeleePotionP2A (default: the save's combat potion slot)")
     ap.add_argument("--filter", help="only targets whose id/name/area contains this text")
     ap.add_argument("--save", help="path to a .sav file (default: newest)")
     ap.add_argument("--verbose", action="store_true")
@@ -1514,6 +1663,10 @@ def main():
     print(f"최대 HP {player.max_hp}  최대 타격 {player.max_hit_base}  명중 레이팅 {player.accuracy}  Power {player.power}  Protection {player.protection}")
     print(f"음식: {player.food} (회복 {player.food_heal}) 보유 {player.food_qty}개   자동식사 임계 {player.ae_threshold:.0%}, 효율 {player.ae_eff:.0%}")
     if player.unmodeled: print("미반영 장비 효과:", ", ".join(player.unmodeled))
+    if player.mods["prayers"] or player.mods["potion"]:
+        print("기도:", ", ".join(p["id"] for p in player.mods["prayers"]) or "없음", "  물약:", (player.mods["potion"] or {}).get("id", "없음"),
+              f"  (보유 기도 포인트 {save.get('prayer_points', 0):,})")
+    if player.mods["other"]: print("미반영 기도/물약 효과:", ", ".join(player.mods["other"]))
 
     targets = build_targets(gd, args)
     print(f"\n{len(targets)}개 대상 시뮬레이션 (각 {args.hours}시간)...")
@@ -1533,7 +1686,7 @@ def main():
                          kills_h=r["kills_h"], loops_h=r["loops_h"], food_h=r["food_h"], healed_h=r["healed_h"], dmg_taken_h=r["dmg_taken_h"],
                          deaths_h=r["deaths_h"], p_hit=r["p_hit"], e_hit=r["e_hit"], p_maxhit=r["p_maxhit"], e_res=r["e_res"], p_res=r["p_res"],
                          avg_fight_s=r["avg_fight_s"], xp_per_food=(comb / r["food_h"]) if r["food_h"] > 0 else None, notes=notes,
-                         kills=r["kills"], deaths=r["deaths"]))
+                         kills=r["kills"], deaths=r["deaths"], prayer_pts_h=r["prayer_pts_h"], potions_h=r["potions_h"]))
         if args.verbose:
             print(f"  {tg['name']:32s} kills/h {r['kills_h']:7.1f}  xp/h {comb:9.0f}  food/h {r['food_h']:6.1f}  deaths/h {r['deaths_h']:5.2f}  hit {r['p_hit']:.0%}/{r['e_hit']:.0%}")
     print(f"완료 ({time.time()-t0:.1f}s)")
@@ -1606,7 +1759,8 @@ tr:hover{{background:#2e333c}} .note{{font-size:12px;color:#aab}}
 • 전투 XP = 실제 준 체력 피해 × 스탠스별 XP 배율 + 처치 시 배율×(4×Armour + 50×Ward). 적 공격 선택: 특수공격 확률 합이 1 미만이면 나머지가 일반 공격<br>
 • 스폰 대기 3초(BaseSpawnInterval) 후 양쪽 공격 타이머가 동시에 시작. 던전 내 전환도 동일<br>
 • 반영된 적 효과: 특수공격(확률·연타·DOT·기절), Rejuvenate, Lifesteal, 타격 시 DOT. 그 외 패시브/효과(TurnCounting 버프, 회피 확률, 면역 등)는 '미반영' 열에 표시<br>
-• 미반영: 기도, 물약, 치명타(기본 0%), 암흑 지역의 Light 장비, 사망 후 전투 중단(시뮬레이션은 계속 진행, 사망/시간으로 표시)</div>
+• 기도·전투 물약: 세이브(또는 --prayers / --potion)의 보너스 반영, 기도 포인트·물약 소모량은 results.json 에 기록. 반사·조건부 효과는 미반영<br>
+• 미반영: 암흑 지역의 Light 장비, 사망 후 전투 중단(시뮬레이션은 계속 진행, 사망/시간으로 표시)</div>
 <script>
 document.querySelectorAll('#t th').forEach((th,i)=>{{th.onclick=()=>{{const tb=document.querySelector('#t tbody');const rows=[...tb.rows];
 const asc=th.dataset.asc!=='1';th.dataset.asc=asc?'1':'0';

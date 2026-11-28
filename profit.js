@@ -97,7 +97,7 @@
     SKILLS.forEach(function (s) {
       var tb = pcfg.tb[s.id] || {};
       s.slots.forEach(function (sl) { var id = tb[sl.id]; if (id && ITEMS[id] && ITEMS[id].tb) add(ITEMS[id].tb.bon, 1, iname(id)); });
-      var fid = s.food ? pcfg.food[s.id] : null; if (fid && ITEMS[fid] && ITEMS[fid].fd) add(ITEMS[fid].fd.bon, 1, "음식 " + iname(fid));
+      var fid = s.food ? pcfg.food[s.id] : null; if (fid && ITEMS[fid] && ITEMS[fid].fd && ITEMS[fid].fd.sk === s.id) add(ITEMS[fid].fd.bon, 1, "음식 " + iname(fid));
       if (s.pet && pcfg.pets[s.pet.id]) add(s.pet.bon, 1, "펫 " + s.pet.name);
       var ri = rankIdx(s.id, pcfg.rank[s.id]);
       s.rankBon.forEach(function (rb) { if (rankIdx(s.id, rb.rank) <= ri) add(rb.bon, 1, "길드 " + rb.name); });
@@ -384,6 +384,11 @@
       var stages = Math.max(1, r.stages + used(res, null, T, "FlatStages", ctx)), skipSt = used(res, null, T, "SkipStageChance", ctx, pc);
       res.t = iv8 + (1 - S8) * (1 - stunAv) * stunIv; res.hp = (1 - S8) * (1 - dmgAv) * (1 + r.dmg) / 2;
       res.info = { iv: iv8, success: S8, stealth: stealth, perc: perc, stunIv: stunIv, stages: stages };
+      var tf = pcfg.food[sk], tfd = tf && ITEMS[tf] && ITEMS[tf].fd;
+      if (res.hp > 0) {
+        if (tfd && tfd.heal > 0) { addq(res.ins, tf, res.hp / tfd.heal); res.info.food = tf; res.info.foodHeal = tfd.heal; }
+        else res.notes.push("도둑질 음식 슬롯이 비어 있어 HP 손실의 음식 비용 미반영");
+      }
       var fortune = used(res, null, T, "FlatFortune", ctx) + (S8 < 1 ? used(res, null, T, "FlatFortuneUnderSuccess", ctx) : 0);
       if (r.cur) { var ccur = { sk: sk, cat: r.cat, rec: r.gid, rt: r.rt, cur: "GoldPieces" }; var fc = used(res, null, T, "FlatCurrencyReward", ccur), pcr = used(res, null, T, "PercentCurrencyReward", ccur, pc); var mn8 = Math.max(0, Math.floor((r.cur[0] + fc) * (1 + pcr))), mx8 = Math.max(0, Math.floor((r.cur[1] + fc) * (1 + pcr))); var cch = Math.max(0, Math.min(1, r.curCh * (1 + used(res, null, T, "PercentCurrencyLootChance", ctx, pc)))); res.gp += S8 * cch * (mn8 + mx8) / 2; }
       var comCh = Math.max(0, Math.min(1, r.comCh * (1 + used(res, null, T, "PercentCommonLootChance", ctx, pc)))), rareCh = Math.max(0, Math.min(1, r.rareCh * (1 + used(res, null, T, "PercentRareLootChance", ctx, pc))));
@@ -404,10 +409,21 @@
     for (var k in r.reqLv) { var have = pcfg.levels[k] != null ? pcfg.levels[k] : (ccfg().levels && ccfg().levels[k] != null ? ccfg().levels[k] : 1); if (have < r.reqLv[k]) return false; }
     return true;
   }
+  // openables with fixed contents (Seaweed Clump -> 100 Seaweed) count as their contents, so recipes that
+  // need the contents (Seaweed) can source them from the fishing spot that drops the openable
+  function openFixed(c) {
+    Object.keys(c.outs).forEach(function (k) {
+      var op = ITEMS[k] && ITEMS[k].open; if (!op) return;
+      var q = c.outs[k]; delete c.outs[k];
+      op.forEach(function (d) { c.outs[d[0]] = (c.outs[d[0]] || 0) + q * d[1]; });
+      c.notes.push(iname(k) + " 개봉 → " + op.map(function (d) { return iname(d[0]) + " ×" + d[1]; }).join(", ") + "으로 계산");
+    });
+    return c;
+  }
   function recomputeAll() {
     rebuildEnts(); RATES = {}; PRODUCERS = {};
     RECIPES.forEach(function (r) {
-      var c = compute(r, pcfg.levels[r.sk] || 1), f = c.t > 0 ? H / c.t : 0, outs = {}, ins = {};
+      var c = openFixed(compute(r, pcfg.levels[r.sk] || 1)), f = c.t > 0 ? H / c.t : 0, outs = {}, ins = {};
       Object.keys(c.outs).forEach(function (k) { outs[k] = c.outs[k] * f; }); Object.keys(c.ins).forEach(function (k) { ins[k] = c.ins[k] * f; });
       var ok = levelOk(r);
       RATES[r.id] = { r: r, c: c, perH: f, outs: outs, ins: ins, gpH: c.gp * f, xpH: c.xp * f, hpH: c.hp * f, ok: ok };
@@ -480,12 +496,12 @@
       if (s.food) {
         var fcur = pcfg.food[s.id] || null, fsave = P0.food[s.id] || null; if (fcur) active++;
         var frow = document.createElement("div"); frow.className = "tbslot" + (fcur !== fsave ? " ch" : "");
-        frow.innerHTML = "<span class=sn title='스킬 음식 슬롯 (보너스는 장착 중 상시 적용, 소모량은 미반영)'>음식</span>";
+        frow.innerHTML = "<span class=sn title='스킬 음식 슬롯 (보너스는 해당 스킬 음식일 때 상시 적용. 도둑질은 HP 손실만큼 이 음식을 소모하는 것으로 계산)'>음식</span>";
         var fsel = document.createElement("select");
-        var fcands = Object.keys(ITEMS).filter(function (id) { return ITEMS[id].fd && ITEMS[id].fd.sk === s.id; });
-        fcands.sort(function (a, b) { var oa = owned(a) ? 0 : 1, ob = owned(b) ? 0 : 1; return oa - ob || ITEMS[a].fd.heal - ITEMS[b].fd.heal; });
+        var fcands = Object.keys(ITEMS).filter(function (id) { return ITEMS[id].fd && (ITEMS[id].fd.sk === s.id || owned(id) || id === fcur || s.id === "Thieving"); });
+        fcands.sort(function (a, b) { var ma = ITEMS[a].fd.sk === s.id ? 0 : 1, mb = ITEMS[b].fd.sk === s.id ? 0 : 1, oa = owned(a) ? 0 : 1, ob = owned(b) ? 0 : 1; return ma - mb || oa - ob || ITEMS[a].fd.heal - ITEMS[b].fd.heal; });
         var f0 = document.createElement("option"); f0.value = ""; f0.textContent = "– 없음 –"; fsel.appendChild(f0);
-        fcands.forEach(function (id) { var o = document.createElement("option"); o.value = id; var it = ITEMS[id]; o.textContent = (owned(id) ? "✓ " : "") + it.n + " · 회복 " + it.fd.heal + (it.fd.bon.length ? " · " + it.fd.bon.map(bonText).join(", ") : ""); o.title = it.d || ""; if (id === fcur) o.selected = true; fsel.appendChild(o); });
+        fcands.forEach(function (id) { var o = document.createElement("option"); o.value = id; var it = ITEMS[id]; o.textContent = (owned(id) ? "✓ " : "") + it.n + " · 회복 " + it.fd.heal + (it.fd.sk === s.id && it.fd.bon.length ? " · " + it.fd.bon.map(bonText).join(", ") : it.fd.sk !== s.id ? " (보너스 없음)" : ""); o.title = it.d || ""; if (id === fcur) o.selected = true; fsel.appendChild(o); });
         fsel.addEventListener("change", function () { pcfg.food[s.id] = fsel.value || null; pchanged(); });
         frow.appendChild(fsel); body.appendChild(frow);
       }
@@ -600,6 +616,11 @@
     $p("#psrcList").innerHTML = ov.length ? ov.map(function (k) { var s = srcOf(k); return "<div class=row style='justify-content:space-between'><span>" + esc(iname(k)) + " → " + esc(s === "shop" ? "상점 구매" : s.indexOf("make:") === 0 ? "직접 생산 (" + (REC[s.slice(5)] ? REC[s.slice(5)].name : s.slice(5)) + ")" : "창고") + "</span><button class='small ghost' data-rs='" + esc(k) + "'>↺</button></div>"; }).join("") : "<div class=note>모든 재료를 창고 판매가로 계산합니다. 상세 패널에서 재료별 수급 경로를 바꾸면 여기 모입니다.</div>";
     $p("#psrcList").querySelectorAll("[data-rs]").forEach(function (b) { b.addEventListener("click", function () { delete pcfg.src[b.dataset.rs]; pchanged(); }); });
   }
+  // food on hand for the Thieving slot: slot quantity (if the save has that item there) + bank
+  function foodLeft(id, perH) {
+    var q = ((B.player.bankAll || {})[id] || 0) + ((PB.save.skillFood || {}).Thieving === id ? ((PB.save.skillFoodQty || {}).Thieving || 0) : 0);
+    return perH > 0 ? " · 보유 " + pfmt(q) + "개 ≈ " + pfmt(q / perH, 1) + "h" : "";
+  }
   function owned(id) { if ((B.player.bankAll || {})[id] > 0) return true; var tb = PB.save.toolbelt || {}; for (var s in tb) for (var sl in tb[s]) if (tb[s][sl][0] === id) return true; return false; }
 
   var PCOLS = [
@@ -683,7 +704,7 @@
       if (c.info.anvil) kv.push([c.info.anvil.name, "제품 → GP ×" + pfmt(c.info.anvil.sale, 3) + " · XP ×" + pfmt(c.info.anvil.xp, 3) + " · 수집품 " + oneIn(c.info.anvil.col) + " 완성"]);
       if (c.info.ivMin != null) kv.push(["간격", c.info.ivMin / 1000 + "–" + c.info.ivMax / 1000 + "s, 물고기 " + pc(c.info.fish)]);
       if (c.info.bottles) kv.push(["배치", (c.info.ivP + c.info.ivH + c.info.ivS) / 1000 + "s + 병입 " + c.info.bottles + "×" + c.info.ivB / 1000 + "s"]);
-      if (c.info.stunIv != null) kv.push(["실패 시", "기절 " + c.info.stunIv / 1000 + "s, HP 손실 " + pfmt(R.hpH) + "/h"]);
+      if (c.info.stunIv != null) kv.push(["실패 시", "기절 " + c.info.stunIv / 1000 + "s, HP 손실 " + pfmt(R.hpH) + "/h" + (c.info.food ? " → " + iname(c.info.food) + " (회복 " + c.info.foodHeal + ") " + pfmt(R.ins[c.info.food], 1) + "개/h" + (foodLeft(c.info.food, R.ins[c.info.food]) || "") : "")]);
       if (r.kind === "farm") {
         kv.push(["성장 시간", pfmt(c.info.iv / 60000) + "분" + (c.info.regrows ? " + 재수확 " + c.info.regrows + "회 × " + pfmt(c.info.regrowIv / 60000) + "분" : "")]);
         kv.push(["수확량/회", pfmt(c.info.qty) + " (병해 " + pfmt(c.info.dis) + " / 해충 " + pfmt(c.info.pest) + " → ×" + pfmt(c.info.adj, 2) + ")"]);
@@ -729,7 +750,7 @@
     h += "<h3>적용된 보너스</h3>";
     if (c.lines.length) { h += "<table>" + c.lines.map(function (l) { return "<tr><td>" + esc(l.k) + "</td><td class=r>" + esc(String(l.v)) + "</td><td class=src>" + esc((l.src || []).map(function (s) { return s.src; }).join(", ")) + "</td></tr>"; }).join("") + "</table>"; }
     else h += "<div class=note>이 활동에 적용되는 보너스가 없습니다.</div>";
-    var notes = c.notes.slice(); if (r.kind === "thief") notes.push("HP 손실은 음식 소모·비용으로 환산하지 않음");
+    var notes = c.notes.slice(); if (r.kind === "thief" && c.info.food) notes.push("HP 손실 ÷ 음식 회복량으로 음식 소모 계산 (자연 회복·자동식사 효율·과회복 미반영)");
     notes.push("소모성 툴벨트 아이템(물약 등)의 소모 비용은 미반영");
     h += "<div class=warnbox>" + notes.map(esc).join("<br>") + "</div></div>";
     d.innerHTML = h;
